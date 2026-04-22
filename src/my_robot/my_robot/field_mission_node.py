@@ -325,12 +325,14 @@ class FieldMissionNode(Node):
         """
         dist_in_row = self._dist_from_step()
 
-        row_end_by_odom = dist_in_row >= (self.row_length - self.end_margin)
+        #row_end_by_odom = dist_in_row >= (self.row_length - self.end_margin)
         row_end_by_vs   = (self.row_end_frames >= self.ROW_END_CONFIRM
                            and dist_in_row >= self.MIN_ROW_DIST)
 
-        if row_end_by_odom or row_end_by_vs:
-            reason = 'odom' if row_end_by_odom else 'VS'
+        #if row_end_by_odom or row_end_by_vs:
+        if row_end_by_vs:
+            # reason = 'odom' if row_end_by_odom else 'VS'
+            reason = 'VS'
             self.get_logger().info(
                 f'[MISSION] Row {self.current_row} end ({reason}), '
                 f'dist={dist_in_row:.1f}m')
