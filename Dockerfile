@@ -26,7 +26,10 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-image-transport \
     ros-jazzy-cv-bridge \
     ros-jazzy-image-geometry \
+    ros-jazzy-tf2-geometry-msgs \
     python3-opencv \
+    python3-scipy \
+    python3-matplotlib \
     # RS-485
     python3-serial \
     && rm -rf /var/lib/apt/lists/*
