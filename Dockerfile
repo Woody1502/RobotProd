@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     # Camera / vision
     ros-jazzy-image-transport \
     ros-jazzy-cv-bridge \
+    ros-jazzy-image-geometry \
     python3-opencv \
     # RS-485
     python3-serial \
