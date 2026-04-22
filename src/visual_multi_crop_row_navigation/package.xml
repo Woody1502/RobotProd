@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>visual_multi_crop_row_navigation</name>
+  <version>0.0.1</version>
+  <description>phenobot multicrop row visual servoing navigation</description>
+
+  <!-- One maintainer tag required, multiple allowed, one person per tag -->
+  <maintainer email="alireza.ahmadi@uni-bonn.todo">alireza</maintainer>
+
+  <!-- One license tag required, multiple allowed, one license per tag -->
+  <!-- Commonly used license strings: -->
+  <!--   BSD, MIT, Boost Software License, GPLv2, GPLv3, LGPLv2.1, LGPLv3 -->
+  <license>BSD</license>
+
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>message_filters</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>image_geometry</depend>
+  <depend>python3-shapely</depend>
+  <depend>python3-opencv</depend>
+  <depend>python3-numpy</depend>
+  <exec_depend>python3-future</exec_depend>
+  <depend>cv_bridge</depend>
+
+
+  <!-- The export tag contains other, unspecified, tags -->
+  <export>
+    <build_type>ament_python</build_type>
+    <!-- Other tools can request additional information be placed here -->
+
+  </export>
+</package>
