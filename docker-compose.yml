@@ -1,0 +1,26 @@
+services:
+  robot:
+    build: .
+    container_name: agrorobot_prod
+    network_mode: host
+    privileged: true
+    environment:
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - ROS_DOMAIN_ID=42
+    devices:
+      # Камера (RealSense / USB camera)
+      - /dev/video0:/dev/video0
+      # IMU / GPS (serial)
+      - /dev/ttyUSB0:/dev/ttyUSB0
+      - /dev/ttyUSB1:/dev/ttyUSB1
+    volumes:
+      - ./src:/ros2_ws/src:ro
+      - ./build:/ros2_ws/build
+      - ./install:/ros2_ws/install
+      - ./log:/ros2_ws/log
+    command: >
+      bash -c "source /opt/ros/jazzy/setup.bash &&
+               colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release &&
+               source install/setup.bash &&
+               ros2 launch my_robot robot.launch.py"
+    restart: unless-stopped

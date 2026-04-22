@@ -1,0 +1,76 @@
+/**:
+  ros__parameters:
+    # === Topics (Gazebo simulation) ===
+    frontColor_topic: '/camera/depth/pure_image'
+    frontDepth_topic: '/camera/depth/image_depth'
+    frontCameraInfo_topic: '/camera/depth/camera_info'
+    backColor_topic: '/camera/depth/pure_image'
+    backDepth_topic: '/camera/depth/image_depth'
+    backCameraInfo_topic: '/camera/depth/camera_info'
+
+    # === Navigation ===
+    # Mode 1: Forward with front camera (default)
+    navigationMode: 1
+    # stationaryDebug: False -> actually publishes steering commands
+    stationaryDebug: False
+
+    # === Velocity limits ===
+    maxOmega: 0.05
+    minOmega: 0.005
+    omegaScaler: 0.08
+    maxLinearVel: 0.5
+    minLinearVel: 0.01
+
+    # === Scanner (horizontal scan across image) ===
+    scanSteps: 10
+    scanStartPoint: 0
+    scanEndPoint: 1280
+    scanWindowWidth: 128
+
+    # === Image processing ===
+    imgResizeRatio: 100
+    minContourArea: 10
+
+    # === ROI for 1280x720 camera image
+    # p1-p4: right side exclusion strip (blackout), p5-p8: left side exclusion strip (blackout)
+    enable_roi: True
+    p1:
+    - 1130
+    - 0
+    p2:
+    - 1280
+    - 0
+    p3:
+    - 1280
+    - 720
+    p4:
+    - 1130
+    - 720
+    p5:
+    - 0
+    - 0
+    p6:
+    - 150
+    - 0
+    p7:
+    - 150
+    - 720
+    p8:
+    - 0
+    - 720
+
+    # === Tracker params ===
+    trackingBoxWidth: 200
+    topOffset: 0
+    bottomOffset: 0
+    scaleRatio: 0.4
+
+    # === Lateral correction gain (steering += -lateralGain * P[0]) ===
+    # P[0] is lateral offset in pixels from image center (~[-640, 640])
+    lateralGain: 0.0005
+
+    # === Feature matching ===
+    linesToPass: 1
+    minKeypointNum: 10
+    maxMatchingDifference: 150
+    minMatchingDifference: 0
