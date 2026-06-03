@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
-rs485_bridge.py — forwards ROS2 control commands to motor controllers via RS-485.
+rs485_bridge.py — forwards ROS2 control commands to motor controllers via RS-485,
+                  and reads heading from a magnetometer on a separate COM port.
 
 Frame format (28 bytes):
   [0xAA][0x55] | float32 vel_fr | float32 vel_fl | float32 vel_br | float32 vel_bl
                | float32 steer  | float32 tilt   | crc8 | [0xFF]
 
 Parameters (ROS2):
-  port         : serial device  (default /dev/ttyUSB0)
-  baudrate     : baud rate      (default 115200)
-  publish_rate : send rate, Hz  (default 20.0)
+  port         : RS-485 serial device  (default /dev/ttyUSB0)
+  baudrate     : RS-485 baud rate      (default 115200)
+  publish_rate : send rate, Hz         (default 20.0)
+  mag_port     : magnetometer device   (default /dev/ttyUSB1)
+  mag_baudrate : magnetometer baud     (default 9600)
 """
 
 import struct
+import threading
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, Float32
 from sensor_msgs.msg import JointState
 
 try:
@@ -49,17 +53,21 @@ class RS485Bridge(Node):
         self.declare_parameter('port',         '/dev/ttyUSB0')
         self.declare_parameter('baudrate',     115200)
         self.declare_parameter('publish_rate', 20.0)
+        self.declare_parameter('mag_port',     '/dev/ttyUSB1')
+        self.declare_parameter('mag_baudrate', 9600)
 
-        port = self.get_parameter('port').value
-        baud = self.get_parameter('baudrate').value
-        rate = self.get_parameter('publish_rate').value
+        port     = self.get_parameter('port').value
+        baud     = self.get_parameter('baudrate').value
+        rate     = self.get_parameter('publish_rate').value
+        mag_port = self.get_parameter('mag_port').value
+        mag_baud = self.get_parameter('mag_baudrate').value
 
         # last commanded values
         self._vel   = [0.0, 0.0, 0.0, 0.0]  # fr, fl, br, bl  (rad/s)
         self._steer = 0.0                     # rad
         self._tilt  = 0.0                     # rad
 
-        # serial
+        # RS-485 serial
         self._ser = None
         if not _HAS_SERIAL:
             self.get_logger().warn('pyserial not installed — running without RS-485 output')
@@ -70,6 +78,18 @@ class RS485Bridge(Node):
             except serial.SerialException as e:
                 self.get_logger().error(f'Cannot open RS-485 port {port}: {e}')
 
+        # magnetometer serial
+        self._mag_ser = None
+        if _HAS_SERIAL:
+            try:
+                self._mag_ser = serial.Serial(mag_port, mag_baud, timeout=1.0)
+                self.get_logger().info(f'Magnetometer open: {mag_port} @ {mag_baud}')
+                self._mag_thread = threading.Thread(
+                    target=self._mag_reader, daemon=True)
+                self._mag_thread.start()
+            except serial.SerialException as e:
+                self.get_logger().warn(f'Magnetometer port {mag_port} not available: {e}')
+
         # subscribers
         self.create_subscription(
             Float64MultiArray, '/velocity_controller/commands',    self._vel_cb,   10)
@@ -79,9 +99,37 @@ class RS485Bridge(Node):
             Float64MultiArray, '/camera_tilt_controller/commands', self._tilt_cb,  10)
 
         # publishers
-        self._js_pub = self.create_publisher(JointState, '/joint_states', 10)
+        self._js_pub  = self.create_publisher(JointState, '/joint_states',          10)
+        self._mag_pub = self.create_publisher(Float32,    '/magnetometer/heading',   10)
 
         self.create_timer(1.0 / rate, self._tick)
+
+    # ── magnetometer reader (background thread) ──────────────────────────────
+
+    def _mag_reader(self):
+        buf = b''
+        while rclpy.ok() and self._mag_ser and self._mag_ser.is_open:
+            try:
+                chunk = self._mag_ser.read(64)
+            except serial.SerialException as e:
+                self.get_logger().warn(
+                    f'Magnetometer read error: {e}', throttle_duration_sec=5.0)
+                break
+            if not chunk:
+                continue
+            buf += chunk
+            while b'\n' in buf:
+                line, buf = buf.split(b'\n', 1)
+                self._parse_mag_line(line.strip())
+
+    def _parse_mag_line(self, line: bytes):
+        try:
+            heading = float(line.decode('ascii'))
+        except (ValueError, UnicodeDecodeError):
+            return
+        msg = Float32()
+        msg.data = heading
+        self._mag_pub.publish(msg)
 
     # ── subscribers ──────────────────────────────────────────────────────────
 

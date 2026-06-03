@@ -97,9 +97,22 @@ def generate_launch_description():
         output='screen',
     )
 
+    usb_camera = Node(
+        package='my_robot',
+        executable='usb_camera',
+        parameters=[{
+            'device_id': 0,
+            'width':     1280,
+            'height':    720,
+            'fps':       30.0,
+        }],
+        output='screen',
+    )
+
     return LaunchDescription([
         robot_state_publisher,
         rs485_bridge,
+        usb_camera,
         ekf_odom,
         ekf_map,
         TimerAction(period=2.0, actions=[acker_odom]),

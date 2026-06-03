@@ -34,6 +34,7 @@ setup(
             'acker_odom    = my_robot.acker_odom:main',
             'row_driver    = my_robot.row_driver:main',
             'field_mission = my_robot.field_mission_node:main',
+            'usb_camera    = my_robot.camera_node:main',
         ],
     },
 )
