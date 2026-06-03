@@ -20,6 +20,9 @@ __pycache__/
 *.swp
 *~
 
+# Network config (machine-specific IPs)
+cyclone_dds.xml
+
 # OS
 .DS_Store
 Thumbs.db

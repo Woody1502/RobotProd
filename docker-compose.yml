@@ -7,6 +7,7 @@ services:
     environment:
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
       - ROS_DOMAIN_ID=42
+      - CYCLONEDDS_URI=/cyclone_dds.xml
     devices:
       # Камера (RealSense / USB camera)
       - /dev/video0:/dev/video0
@@ -14,6 +15,7 @@ services:
       - /dev/ttyUSB0:/dev/ttyUSB0
       - /dev/ttyUSB1:/dev/ttyUSB1
     volumes:
+      - ./cyclone_dds.xml:/cyclone_dds.xml:ro
       - ./src:/ros2_ws/src:ro
       - ./build:/ros2_ws/build
       - ./install:/ros2_ws/install
