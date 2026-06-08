@@ -40,9 +40,11 @@ def generate_launch_description():
         package='my_robot',
         executable='rs485_bridge',
         parameters=[{
-            'port':         '/dev/ttyUSB0',
-            'baudrate':     115200,
-            'publish_rate': 20.0,
+            'vim_host':      '192.168.5.42',
+            'vim_port':      81,
+            'publish_rate':  20.0,
+            'max_speed':     10.0,   # рад/с → мощность 255, подобрать на роботе
+            'hall_to_rads':  1.0,    # Гц Холла → рад/с, подобрать на роботе
         }],
         output='screen',
     )
