@@ -44,15 +44,18 @@ _BLDC_ADDRS = (_BLDC_FR, _BLDC_FL, _BLDC_BR, _BLDC_BL)
 # ── VIM relay actuator map ────────────────────────────────────────────────────
 # (modbus_addr, {cmd: (ch0_val, ch1_val)})
 # ch values: 0=off, 1=forward polarity, 2=reverse polarity
-# cmd: 0=stop, 1=A, 2=B, 3=C, 4=home
+# Manipulator (addr 1): ch0=up/down axis, ch1=left/right axis — written separately via FC06
+# Bucket/Frame/Bunker/Flaps (addr 2-5): both channels always same value — mirrors write_long from EXE
+# Separator is a BLDC (addr 6) — handled separately in _send_actuators via FC05+FC06
 _VIM_MAP = {
-    'manipulator': (1, {0:(0,0), 1:(1,0), 2:(0,1), 3:(0,2), 4:(0,0)}),
-    'bucket':      (2, {0:(0,0), 1:(1,0), 2:(2,0), 3:(0,0)}),
-    'frame':       (3, {0:(0,0), 1:(1,0), 2:(2,0), 3:(0,0)}),
-    'bunker':      (4, {0:(0,0), 1:(1,0), 2:(2,0)}),
-    'flaps':       (5, {0:(0,0), 1:(1,0)}),
-    'separator':   (6, {0:(0,0), 1:(1,0), 2:(2,0)}),
+    'manipulator': (1, {0:(0,0), 1:(1,0), 2:(2,0), 3:(0,1), 4:(0,2)}),
+    'bucket':      (2, {0:(0,0), 1:(1,1), 2:(2,2)}),
+    'frame':       (3, {0:(0,0), 1:(1,1), 2:(2,2)}),
+    'bunker':      (4, {0:(0,0), 1:(1,1), 2:(2,2)}),
+    'flaps':       (5, {0:(0,0), 1:(1,1)}),
 }
+
+_SEPARATOR_ADDR = 6  # BLDC board — direction via FC05 coil 1, speed via FC06 reg 0
 
 _WHEEL_JOINTS = [
     'front_right_base_to_front_right_wheel',
@@ -124,7 +127,8 @@ class RS485Bridge(Node):
         self._hall_tick = 0
 
         # VIM actuator state
-        self._vim_cmds     = {name: 0 for name in _VIM_MAP}
+        self._vim_cmds      = {name: 0 for name in _VIM_MAP}
+        self._separator_cmd = 0   # 0=stop, 1=forward(up), 2=reverse(down)
         self._motor_enables = [True, True, True, True]  # fr, fl, br, bl
 
         # ── TCP socket to WiFi bridge ─────────────────────────────────────────
@@ -156,6 +160,8 @@ class RS485Bridge(Node):
             self.create_subscription(
                 Int8, f'/vim/{name}',
                 lambda msg, n=name: self._vim_cb(n, msg), 10)
+        self.create_subscription(
+            Int8, '/vim/separator', self._separator_cb, 10)
 
         # ── Publishers ────────────────────────────────────────────────────────
         self._js_pub  = self.create_publisher(JointState, '/joint_states',        10)
@@ -175,14 +181,14 @@ class RS485Bridge(Node):
             self.get_logger().error(f'VIM connect failed ({host}:{port}): {e}')
 
     def _send(self, frame: bytes, read_len: int = 0) -> bytes:
-        """Send Modbus frame, optionally read response. Thread-safe."""
+        """Send Modbus frame, read response of read_len bytes (or echo-drain 8 bytes for writes). Thread-safe."""
         with self._sock_lock:
             if self._sock is None:
                 return b''
             try:
                 self._sock.sendall(frame)
-                if read_len > 0:
-                    return self._sock.recv(read_len)
+                n = read_len if read_len > 0 else 8
+                return self._sock.recv(n)
             except OSError as e:
                 self.get_logger().warn(f'VIM socket error: {e}',
                                        throttle_duration_sec=5.0)
@@ -190,10 +196,11 @@ class RS485Bridge(Node):
         return b''
 
     def _enable_all_bldc(self):
-        """Enable all BLDC boards once at startup (coil 0 = Enable)."""
+        """Enable all BLDC boards (wheels + separator) once at startup (coil 0 = Enable)."""
         for addr in _BLDC_ADDRS:
             self._send(_fc05(addr, 0, True))
-        self.get_logger().info('BLDC boards enabled')
+        self._send(_fc05(_SEPARATOR_ADDR, 0, True))
+        self.get_logger().info('BLDC boards enabled (wheels + separator)')
 
     # ── Subscribers ───────────────────────────────────────────────────────────
 
@@ -218,6 +225,10 @@ class RS485Bridge(Node):
     def _vim_cb(self, name: str, msg: Int8):
         """Store latest command integer for a named VIM actuator (0 = stop)."""
         self._vim_cmds[name] = int(msg.data)
+
+    def _separator_cb(self, msg: Int8):
+        """Store separator command: 0=stop, 1=forward(up), 2=reverse(down)."""
+        self._separator_cmd = int(msg.data)
 
     def _motor_enable_cb(self, msg: Float64MultiArray):
         """Enable or disable individual BLDC boards. Sends FC05 coil-0 per board immediately."""
@@ -260,11 +271,21 @@ class RS485Bridge(Node):
         self._send(_fc06(_RELAY_STEER, 0, val))
 
     def _send_actuators(self):
-        """Write ch0/ch1 relay register values for each VIM actuator board according to _VIM_MAP."""
+        """Write relay actuator boards (FC06 ch0/ch1) and separator BLDC (FC05+FC06)."""
         for name, (addr, cmds) in _VIM_MAP.items():
             ch0, ch1 = cmds.get(self._vim_cmds[name], (0, 0))
             self._send(_fc06(addr, 0, ch0))
             self._send(_fc06(addr, 1, ch1))
+        # Separator is BLDC: direction coil 1 + speed register 0
+        cmd = self._separator_cmd
+        if cmd == 0:
+            self._send(_fc06(_SEPARATOR_ADDR, 0, 0))          # speed = 0 (stop)
+        elif cmd == 1:
+            self._send(_fc05(_SEPARATOR_ADDR, 1, False))       # direction = forward
+            self._send(_fc06(_SEPARATOR_ADDR, 0, 255))         # speed = full
+        elif cmd == 2:
+            self._send(_fc05(_SEPARATOR_ADDR, 1, True))        # direction = reverse
+            self._send(_fc06(_SEPARATOR_ADDR, 0, 255))         # speed = full
 
     def _read_hall(self):
         """Read Hall sensor frequency from each BLDC board (FC04, reg 0)."""
@@ -314,6 +335,15 @@ class RS485Bridge(Node):
         self._mag_pub.publish(msg)
 
     def destroy_node(self):
+        """Zero all actuators and disable BLDC boards before shutdown."""
+        for addr in list(_BLDC_ADDRS) + [_SEPARATOR_ADDR]:
+            self._send(_fc06(addr, 0, 0))       # speed = 0
+            self._send(_fc05(addr, 1, False))    # direction = 0
+            self._send(_fc05(addr, 0, False))    # enable = 0
+        for name, (addr, _) in _VIM_MAP.items():
+            self._send(_fc06(addr, 0, 0))
+            self._send(_fc06(addr, 1, 0))
+        self._send(_fc06(_RELAY_STEER, 0, 0))
         with self._sock_lock:
             if self._sock:
                 try:
