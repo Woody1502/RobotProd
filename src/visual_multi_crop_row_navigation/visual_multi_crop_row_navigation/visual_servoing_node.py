@@ -59,7 +59,6 @@ class VisualServoingNode(Node):
 
     def __init__(self):
         super().__init__('vs_navigator')
-        self.get_logger().info('#[VS] Visual_servoing navigator node running ...')
         # cv bridge
         self.bridge = CvBridge()
         self.queue_size = 1
@@ -224,8 +223,6 @@ class VisualServoingNode(Node):
                                             self.trackerParams)
 
         self.cameraModel = image_geometry.PinholeCameraModel()
-        self.get_logger().info('Detection Camera initialised..')
-        print('')
 
         self.featureMatcher = featureMatching(self.featureParams)
 
@@ -236,7 +233,6 @@ class VisualServoingNode(Node):
         # ROI live update from GUI: [left_margin, right_margin, enable(0/1)]
         self.create_subscription(Int32MultiArray, '/vs_nav/roi', self._roi_callback, 10)
 
-        self.get_logger().info("#[VS] navigator initialied ... ")
 
     def _roi_callback(self, msg):
         if len(msg.data) < 5:
@@ -251,20 +247,15 @@ class VisualServoingNode(Node):
             'p5': [0, 0],      'p6': [lt, 0], 'p7': [lb, h], 'p8': [0, h],
         }
         self.imageProcessor.reset()
-        self.get_logger().info(
-            f'#[VS] ROI updated: L bot={lb} top={lt} | R bot={rb} top={rt} | enable={enable}')
 
     def _vs_active_cb(self, msg: Bool):
         self.vs_active = msg.data
-        state = 'ACTIVE' if self.vs_active else 'PAUSED'
-        self.get_logger().info(f'#[VS] Visual servoing {state} by mission node.')
 
     def _joy_callback(self, msg):
         buttons = list(msg.buttons)
         # Rising edge detection: button 3 (Y on Xbox) just pressed
         if (len(self._prev_joy_buttons) > 3 and len(buttons) > 3
                 and buttons[3] == 1 and self._prev_joy_buttons[3] == 0):
-            self.get_logger().info('#[VS] Tracker reset by gamepad (Y button)')
             self.imageProcessor.reset()
         self._prev_joy_buttons = buttons
 
@@ -281,22 +272,15 @@ class VisualServoingNode(Node):
                                                            self.backDepth)
         # If the feature extractor is not initialized yet, this has to be done
         if not self.imageProcessor.findCropLane(primaryRGB, primaryDepth, mode='RGB-D'):
-            self.get_logger().warn("Initialization unsuccessful. Attempting to reinitialize...")
-            self.imageProcessor.reset()  # Сброс состояния трекера
-            time.sleep(0.5)  # Небольшая задержка перед повторной попыткой
-            # Повторная попытка инициализации
-            if not self.imageProcessor.findCropLane(primaryRGB, primaryDepth, mode='RGB-D'):
-                self.get_logger().error("Failed to reinitialize tracker. Waiting for new frames...")
-            else:
-                self.get_logger().info("Tracker reinitialized successfully!")
+            self.imageProcessor.reset()
+            time.sleep(0.5)
+            self.imageProcessor.findCropLane(primaryRGB, primaryDepth, mode='RGB-D')
         else:
             # Публикуем сигнал конца ряда для mission node
             row_end_msg = Bool()
             row_end_msg.data = bool(self.imageProcessor.cropRowEnd)
             self.row_end_pub.publish(row_end_msg)
 
-            print("cropLaneFound", self.imageProcessor.cropLaneFound, "cropRowEnd",
-                  self.imageProcessor.cropRowEnd)
             # if the robot is currently following a line and is not turning just compute the controls
           
             self.imageProcessor.trackCropLane(self.navigationMode)
@@ -304,8 +288,6 @@ class VisualServoingNode(Node):
                                                 # self.imageProcessor.P,
                                                 # self.imageProcessor.ang)
             
-            print('ANGLE:',self.imageProcessor.ang)
-            print('P:', self.imageProcessor.P)
             
             
             
@@ -362,10 +344,9 @@ class VisualServoingNode(Node):
         try:
             # Convert your ROS Image message to OpenCV2
             self.frontImg = self.bridge.imgmsg_to_cv2(rgbImage, "bgr8")
-        except CvBridgeError as e:
-            print(e)
+        except CvBridgeError:
+            pass
         try:
-            # Convert your ROS Image message to OpenCV2
             # The depth image is a single-channel float32 image
             # the values is the distance in mm in z axis
             cv_depth = self.bridge.imgmsg_to_cv2(depthImage, "passthrough")
@@ -375,8 +356,8 @@ class VisualServoingNode(Node):
             # Normalize the depth image to fall between 0 (black) and 1 (white)
             cv.normalize(self.frontDepth, self.frontDepth,
                          0.0, 1.0, cv.NORM_MINMAX)
-        except CvBridgeError as e:
-            print(e)
+        except CvBridgeError:
+            pass
 
         # get image size
         self.imgHeight, self.imgWidth, self.imgCh = self.frontImg.shape
@@ -384,7 +365,6 @@ class VisualServoingNode(Node):
         if self.frontImg is not None:
             # compute and publish robot controls if the image is currently used
             if self.primaryCamera:
-                print(self.frontImg.shape)
                 self.navigate()
 
 

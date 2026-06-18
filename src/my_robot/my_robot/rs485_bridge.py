@@ -1,35 +1,45 @@
 #!/usr/bin/env python3
 """
-rs485_bridge.py — Modbus RTU bridge to VIM hardware over TCP (USR-W610 WiFi module).
+rs485_bridge.py — Modbus RTU bridge to VIM hardware via virtual COM port.
 
-Sends raw Modbus RTU frames over a TCP socket to the WiFi-RS485 bridge, which
-forwards them to BLDC motor boards (addr 8-11) and a steering relay board (addr 7).
+Uses minimalmodbus to send Modbus RTU frames through a virtual serial port
+(created by socat: pty -> TCP:192.168.5.42:81) to the WiFi-RS485 bridge,
+which forwards them to BLDC motor boards (addr 8-11) and a steering relay
+board (addr 7).
 
 Wheel velocities received as rad/s are converted to power 0-255 proportionally.
 Actual velocities are read back from Hall sensors and published to /joint_states.
 
 Parameters:
-  vim_host      : WiFi bridge IP               (default 192.168.5.42)
-  vim_port      : WiFi bridge TCP port         (default 81)
-  publish_rate  : control loop Hz              (default 20.0)
-  max_speed     : rad/s that maps to power 255 (default 10.0 — tune on robot)
-  hall_to_rads  : Hall sensor Hz → rad/s       (default 1.0  — tune on robot)
-  mag_port      : magnetometer serial device   (default /dev/ttyUSB1)
-  mag_baudrate  : magnetometer baud rate       (default 9600)
+  modbus_port   : virtual COM port path           (default /dev/ttyVCOM1)
+  modbus_baud   : Modbus baud rate                (default 38400)
+  publish_rate  : control loop Hz                 (default 20.0)
+  max_speed     : rad/s that maps to power 255    (default 10.0 — tune on robot)
+  hall_to_rads  : Hall sensor Hz → rad/s          (default 1.0  — tune on robot)
+  mag_port      : magnetometer serial device      (default /dev/ttyUSB1)
+  mag_baudrate  : magnetometer baud rate          (default 9600)
 """
 
-import socket
 import threading
+import time
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float64MultiArray, Float32, Int8
 from sensor_msgs.msg import JointState
 
 try:
+    import minimalmodbus
+    _HAS_MINIMALMODBUS = True
+except ImportError:
+    _HAS_MINIMALMODBUS = False
+
+try:
     import serial
     _HAS_SERIAL = True
 except ImportError:
     _HAS_SERIAL = False
+
 
 # ── Modbus board addresses ────────────────────────────────────────────────────
 
@@ -44,9 +54,6 @@ _BLDC_ADDRS = (_BLDC_FR, _BLDC_FL, _BLDC_BR, _BLDC_BL)
 # ── VIM relay actuator map ────────────────────────────────────────────────────
 # (modbus_addr, {cmd: (ch0_val, ch1_val)})
 # ch values: 0=off, 1=forward polarity, 2=reverse polarity
-# Manipulator (addr 1): ch0=up/down axis, ch1=left/right axis — written separately via FC06
-# Bucket/Frame/Bunker/Flaps (addr 2-5): both channels always same value — mirrors write_long from EXE
-# Separator is a BLDC (addr 6) — handled separately in _send_actuators via FC05+FC06
 _VIM_MAP = {
     'manipulator': (1, {0:(0,0), 1:(1,0), 2:(2,0), 3:(0,1), 4:(0,2)}),
     'bucket':      (2, {0:(0,0), 1:(1,1), 2:(2,2)}),
@@ -55,7 +62,7 @@ _VIM_MAP = {
     'flaps':       (5, {0:(0,0), 1:(1,1)}),
 }
 
-_SEPARATOR_ADDR = 6  # BLDC board — direction via FC05 coil 1, speed via FC06 reg 0
+_SEPARATOR_ADDR = 6  # BLDC board
 
 _WHEEL_JOINTS = [
     'front_right_base_to_front_right_wheel',
@@ -66,56 +73,30 @@ _WHEEL_JOINTS = [
 _STEER_JOINT = 'base_link_to_wheeling_mech'
 _TILT_JOINT  = 'front_wheels_base_to_depth_camera'
 
-# ── Modbus RTU frame builders ─────────────────────────────────────────────────
-
-def _crc16(data: bytes) -> int:
-    """Compute Modbus CRC-16 (polynomial 0xA001, init 0xFFFF)."""
-    crc = 0xFFFF
-    for b in data:
-        crc ^= b
-        for _ in range(8):
-            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
-    return crc
-
-def _frame(*args: int) -> bytes:
-    """Build a Modbus RTU frame: raw bytes + CRC-16 appended little-endian."""
-    raw = bytes(args)
-    crc = _crc16(raw)
-    return raw + bytes([crc & 0xFF, crc >> 8])
-
-def _fc05(addr: int, coil: int, on: bool) -> bytes:
-    """Write Single Coil."""
-    v = 0xFF00 if on else 0x0000
-    return _frame(addr, 0x05, 0, coil, v >> 8, v & 0xFF)
-
-def _fc06(addr: int, reg: int, value: int) -> bytes:
-    """Write Single Register."""
-    return _frame(addr, 0x06, 0, reg, value >> 8, value & 0xFF)
-
-def _fc04(addr: int, reg: int, count: int = 1) -> bytes:
-    """Read Input Registers."""
-    return _frame(addr, 0x04, 0, reg, 0, count)
-
 
 class RS485Bridge(Node):
     def __init__(self):
         super().__init__('rs485_bridge')
 
-        self.declare_parameter('vim_host',     '192.168.5.42')
-        self.declare_parameter('vim_port',     81)
-        self.declare_parameter('publish_rate', 20.0)
-        self.declare_parameter('max_speed',    10.0)
-        self.declare_parameter('hall_to_rads', 1.0)
-        self.declare_parameter('mag_port',     '/dev/ttyUSB1')
-        self.declare_parameter('mag_baudrate', 9600)
+        if not _HAS_MINIMALMODBUS:
+            self.get_logger().fatal('minimalmodbus is not installed. Exiting.')
+            raise SystemExit(1)
 
-        vim_host        = self.get_parameter('vim_host').value
-        vim_port        = self.get_parameter('vim_port').value
-        rate            = self.get_parameter('publish_rate').value
+        self.declare_parameter('modbus_port',  '/dev/ttyVCOM1')
+        self.declare_parameter('modbus_baud',   38400)
+        self.declare_parameter('publish_rate',  20.0)
+        self.declare_parameter('max_speed',     10.0)
+        self.declare_parameter('hall_to_rads',  1.0)
+        self.declare_parameter('mag_port',      '/dev/ttyUSB1')
+        self.declare_parameter('mag_baudrate',  9600)
+
+        modbus_port    = self.get_parameter('modbus_port').value
+        modbus_baud    = self.get_parameter('modbus_baud').value
+        rate           = self.get_parameter('publish_rate').value
         self._max_speed    = self.get_parameter('max_speed').value
         self._hall_to_rads = self.get_parameter('hall_to_rads').value
-        mag_port        = self.get_parameter('mag_port').value
-        mag_baud        = self.get_parameter('mag_baudrate').value
+        mag_port       = self.get_parameter('mag_port').value
+        mag_baud       = self.get_parameter('mag_baudrate').value
 
         # last commanded values
         self._vel   = [0.0, 0.0, 0.0, 0.0]   # fr, fl, br, bl  (rad/s)
@@ -129,13 +110,22 @@ class RS485Bridge(Node):
         # VIM actuator state
         self._vim_cmds      = {name: 0 for name in _VIM_MAP}
         self._separator_cmd = 0   # 0=stop, 1=forward(up), 2=reverse(down)
-        self._motor_enables = [True, True, True, True]  # fr, fl, br, bl
+        self._motor_enables = [True, True, True, True]
 
-        # ── TCP socket to WiFi bridge ─────────────────────────────────────────
-        self._sock      = None
-        self._sock_lock = threading.Lock()
-        self._connect_vim(vim_host, vim_port)
-        self._enable_all_bldc()
+        # ── Modbus instruments (all share the same virtual port) ──────────────
+        self._devs = {}          # addr -> Instrument
+        self._modbus_lock = threading.Lock()
+        self._modbus_ok = False
+
+        self.get_logger().info(f'Connecting to Modbus on {modbus_port} @ {modbus_baud} baud...')
+        try:
+            self._init_modbus(modbus_port, modbus_baud)
+            self._modbus_ok = True
+            self._enable_all_bldc()
+            self._probe_devices()
+        except Exception as e:
+            self.get_logger().error(f'Modbus init failed on {modbus_port}: {e}')
+            self.get_logger().warn('Running without hardware — all Modbus calls will be no-ops.')
 
         # ── Magnetometer serial ───────────────────────────────────────────────
         self._mag_ser = None
@@ -169,43 +159,86 @@ class RS485Bridge(Node):
 
         self.create_timer(1.0 / rate, self._tick)
 
-    # ── TCP connection ────────────────────────────────────────────────────────
+    # ── Modbus init ───────────────────────────────────────────────────────────
 
-    def _connect_vim(self, host: str, port: int):
-        """Open TCP connection to the USR-W610 WiFi-RS485 bridge. Logs error on failure."""
-        try:
-            self._sock = socket.create_connection((host, port), timeout=3.0)
-            self._sock.settimeout(0.1)
-            self.get_logger().info(f'VIM WiFi bridge connected: {host}:{port}')
-        except OSError as e:
-            self.get_logger().error(f'VIM connect failed ({host}:{port}): {e}')
-
-    def _send(self, frame: bytes, read_len: int = 0) -> bytes:
-        """Send Modbus frame, read response of read_len bytes (or echo-drain 8 bytes for writes). Thread-safe."""
-        with self._sock_lock:
-            if self._sock is None:
-                return b''
-            try:
-                self._sock.sendall(frame)
-                n = read_len if read_len > 0 else 8
-                return self._sock.recv(n)
-            except OSError as e:
-                self.get_logger().warn(f'VIM socket error: {e}',
-                                       throttle_duration_sec=5.0)
-                self._sock = None
-        return b''
+    def _init_modbus(self, port: str, baud: int):
+        """Create minimalmodbus Instrument for each Modbus address."""
+        all_addrs = list(_BLDC_ADDRS) + [_SEPARATOR_ADDR, _RELAY_STEER] + \
+                    [v[0] for v in _VIM_MAP.values()]
+        for addr in all_addrs:
+            dev = minimalmodbus.Instrument(port, addr)
+            dev.serial.baudrate = baud
+            dev.serial.timeout = 0.1
+            self._devs[addr] = dev
+        self.get_logger().info(
+            f'Serial port {port} opened @ {baud} baud — {len(self._devs)} Modbus addresses registered')
 
     def _enable_all_bldc(self):
         """Enable all BLDC boards (wheels + separator) once at startup (coil 0 = Enable)."""
         for addr in _BLDC_ADDRS:
-            self._send(_fc05(addr, 0, True))
-        self._send(_fc05(_SEPARATOR_ADDR, 0, True))
-        self.get_logger().info('BLDC boards enabled (wheels + separator)')
+            self._write_bit(addr, 0, True)
+        self._write_bit(_SEPARATOR_ADDR, 0, True)
+        self.get_logger().info('Enable coil sent to all BLDC boards (addr 6, 8-11)')
+
+    def _probe_devices(self):
+        """Probe each board with FC03 read; log which ones respond."""
+        _NAMES = {
+            1: 'manipulator', 2: 'bucket', 3: 'frame', 4: 'bunker',
+            5: 'flaps', 6: 'separator(BLDC)', 7: 'steering',
+            8: 'motor-FL', 9: 'motor-FR', 10: 'motor-RL', 11: 'motor-RR',
+        }
+        ok, fail = [], []
+        for addr, name in _NAMES.items():
+            try:
+                with self._modbus_lock:
+                    self._devs[addr].read_register(0, 0, 3, False)
+                ok.append(f'{addr}:{name}')
+            except Exception:
+                fail.append(f'{addr}:{name}')
+        if ok:
+            self.get_logger().info(f'Modbus OK:   {", ".join(ok)}')
+        if fail:
+            self.get_logger().warn(f'Modbus FAIL: {", ".join(fail)}')
+
+    # ── minimalmodbus wrappers ────────────────────────────────────────────────
+
+    def _write_bit(self, addr: int, coil: int, value: bool):
+        """Write Single Coil (FC05) through minimalmodbus."""
+        if not self._modbus_ok or addr not in self._devs:
+            return
+        with self._modbus_lock:
+            try:
+                self._devs[addr].write_bit(coil, int(value), 5)
+            except minimalmodbus.ModbusException as e:
+                self.get_logger().warn(f'Modbus write_bit addr={addr} coil={coil}: {e}',
+                                       throttle_duration_sec=2.0)
+
+    def _write_register(self, addr: int, reg: int, value: int):
+        """Write Single Register (FC06) through minimalmodbus."""
+        if not self._modbus_ok or addr not in self._devs:
+            return
+        with self._modbus_lock:
+            try:
+                self._devs[addr].write_register(reg, value, 0, 6, False)
+            except minimalmodbus.ModbusException as e:
+                self.get_logger().warn(f'Modbus write_reg addr={addr} reg={reg}: {e}',
+                                       throttle_duration_sec=2.0)
+
+    def _read_register(self, addr: int, reg: int) -> int:
+        """Read Input Register (FC04) through minimalmodbus and return raw 16-bit value."""
+        if not self._modbus_ok or addr not in self._devs:
+            return 0
+        with self._modbus_lock:
+            try:
+                return self._devs[addr].read_register(reg, 0, 4, False)
+            except minimalmodbus.ModbusException as e:
+                self.get_logger().warn(f'Modbus read_reg addr={addr} reg={reg}: {e}',
+                                       throttle_duration_sec=2.0)
+                return 0
 
     # ── Subscribers ───────────────────────────────────────────────────────────
 
     def _vel_cb(self, msg: Float64MultiArray):
-        """Store commanded wheel velocities (rad/s). Accepts 4-element or broadcast 1-element array."""
         d = list(msg.data)
         if len(d) >= 4:
             self._vel = d[:4]
@@ -213,35 +246,31 @@ class RS485Bridge(Node):
             self._vel = [d[0]] * 4
 
     def _steer_cb(self, msg: Float64MultiArray):
-        """Store commanded steering angle (rad). Positive = left, negative = right."""
         if msg.data:
             self._steer = msg.data[0]
 
     def _tilt_cb(self, msg: Float64MultiArray):
-        """Store camera tilt angle (rad) for joint_states publishing (no hardware output)."""
         if msg.data:
             self._tilt = msg.data[0]
 
     def _vim_cb(self, name: str, msg: Int8):
-        """Store latest command integer for a named VIM actuator (0 = stop)."""
         self._vim_cmds[name] = int(msg.data)
 
     def _separator_cb(self, msg: Int8):
-        """Store separator command: 0=stop, 1=forward(up), 2=reverse(down)."""
         self._separator_cmd = int(msg.data)
 
     def _motor_enable_cb(self, msg: Float64MultiArray):
-        """Enable or disable individual BLDC boards. Sends FC05 coil-0 per board immediately."""
         d = list(msg.data)
         if len(d) >= 4:
             self._motor_enables = [bool(v) for v in d[:4]]
             for addr, en in zip(_BLDC_ADDRS, self._motor_enables):
-                self._send(_fc05(addr, 0, en))
+                self._write_bit(addr, 0, en)
 
     # ── Main loop (20 Hz) ─────────────────────────────────────────────────────
 
     def _tick(self):
-        """Main control loop called at publish_rate Hz. Drives motors, steering, actuators; reads Hall sensors every 4th tick."""
+        if not self._modbus_ok:
+            return
         self._send_bldc()
         self._send_steering()
         self._send_actuators()
@@ -252,52 +281,48 @@ class RS485Bridge(Node):
         self._publish_joint_states()
 
     def _send_bldc(self):
-        """Convert rad/s velocities to 0-255 power and send direction + power to each BLDC board via FC05/FC06."""
+        """Convert rad/s velocities to 0-255 power and send direction + power."""
         for addr, vel in zip(_BLDC_ADDRS, self._vel):
             power   = min(255, int(abs(vel) / self._max_speed * 255))
             forward = vel >= 0.0
-            self._send(_fc05(addr, 1, forward))   # coil 1 = Direction
-            self._send(_fc06(addr, 0, power))      # reg  0 = Power
+            self._write_bit(addr, 1, forward)
+            self._write_register(addr, 0, power)
 
     def _send_steering(self):
-        """Write steering relay register: 1 = left, 2 = right, 0 = stop (deadband ±0.05 rad)."""
         steer = self._steer
         if steer > 0.05:
-            val = 1   # прямая полярность → налево
+            val = 1
         elif steer < -0.05:
-            val = 2   # обратная полярность → направо
+            val = 2
         else:
-            val = 0   # стоп
-        self._send(_fc06(_RELAY_STEER, 0, val))
+            val = 0
+        self._write_register(_RELAY_STEER, 0, val)
 
     def _send_actuators(self):
         """Write relay actuator boards (FC06 ch0/ch1) and separator BLDC (FC05+FC06)."""
         for name, (addr, cmds) in _VIM_MAP.items():
             ch0, ch1 = cmds.get(self._vim_cmds[name], (0, 0))
-            self._send(_fc06(addr, 0, ch0))
-            self._send(_fc06(addr, 1, ch1))
-        # Separator is BLDC: direction coil 1 + speed register 0
+            self._write_register(addr, 0, ch0)
+            self._write_register(addr, 1, ch1)
+
         cmd = self._separator_cmd
         if cmd == 0:
-            self._send(_fc06(_SEPARATOR_ADDR, 0, 0))          # speed = 0 (stop)
+            self._write_register(_SEPARATOR_ADDR, 0, 0)
         elif cmd == 1:
-            self._send(_fc05(_SEPARATOR_ADDR, 1, False))       # direction = forward
-            self._send(_fc06(_SEPARATOR_ADDR, 0, 255))         # speed = full
+            self._write_bit(_SEPARATOR_ADDR, 1, False)
+            self._write_register(_SEPARATOR_ADDR, 0, 255)
         elif cmd == 2:
-            self._send(_fc05(_SEPARATOR_ADDR, 1, True))        # direction = reverse
-            self._send(_fc06(_SEPARATOR_ADDR, 0, 255))         # speed = full
+            self._write_bit(_SEPARATOR_ADDR, 1, True)
+            self._write_register(_SEPARATOR_ADDR, 0, 255)
 
     def _read_hall(self):
         """Read Hall sensor frequency from each BLDC board (FC04, reg 0)."""
         for i, addr in enumerate(_BLDC_ADDRS):
-            resp = self._send(_fc04(addr, 0, 1), read_len=7)
-            if len(resp) == 7 and resp[1] == 0x04:
-                hz   = (resp[3] << 8) | resp[4]
-                sign = 1.0 if self._vel[i] >= 0.0 else -1.0
-                self._hall_vel[i] = sign * hz * self._hall_to_rads
+            hz = self._read_register(addr, 0)
+            sign = 1.0 if self._vel[i] >= 0.0 else -1.0
+            self._hall_vel[i] = sign * hz * self._hall_to_rads
 
     def _publish_joint_states(self):
-        """Publish wheel Hall velocities + steering/tilt positions to /joint_states."""
         js = JointState()
         js.header.stamp = self.get_clock().now().to_msg()
         js.name     = _WHEEL_JOINTS + [_STEER_JOINT, _TILT_JOINT]
@@ -308,7 +333,6 @@ class RS485Bridge(Node):
     # ── Magnetometer reader (background thread) ───────────────────────────────
 
     def _mag_reader(self):
-        """Background thread: reads ASCII heading lines from magnetometer serial port and publishes them."""
         buf = b''
         while rclpy.ok() and self._mag_ser and self._mag_ser.is_open:
             try:
@@ -325,7 +349,6 @@ class RS485Bridge(Node):
                 self._parse_mag_line(line.strip())
 
     def _parse_mag_line(self, line: bytes):
-        """Parse a single ASCII float line from the magnetometer and publish to /magnetometer/heading."""
         try:
             heading = float(line.decode('ascii'))
         except (ValueError, UnicodeDecodeError):
@@ -336,20 +359,15 @@ class RS485Bridge(Node):
 
     def destroy_node(self):
         """Zero all actuators and disable BLDC boards before shutdown."""
+        self.get_logger().info('Shutting down: zeroing all actuators and disabling motors...')
         for addr in list(_BLDC_ADDRS) + [_SEPARATOR_ADDR]:
-            self._send(_fc06(addr, 0, 0))       # speed = 0
-            self._send(_fc05(addr, 1, False))    # direction = 0
-            self._send(_fc05(addr, 0, False))    # enable = 0
+            self._write_register(addr, 0, 0)
+            self._write_bit(addr, 1, False)
+            self._write_bit(addr, 0, False)
         for name, (addr, _) in _VIM_MAP.items():
-            self._send(_fc06(addr, 0, 0))
-            self._send(_fc06(addr, 1, 0))
-        self._send(_fc06(_RELAY_STEER, 0, 0))
-        with self._sock_lock:
-            if self._sock:
-                try:
-                    self._sock.close()
-                except OSError:
-                    pass
+            self._write_register(addr, 0, 0)
+            self._write_register(addr, 1, 0)
+        self._write_register(_RELAY_STEER, 0, 0)
         super().destroy_node()
 
 
