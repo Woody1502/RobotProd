@@ -97,7 +97,7 @@ class featureMatching:
             mvSignal = movingStd(self.simDistVec)
             # find positive an negative peaks of the signal
             peaks, troughs = findPicksTroughths(self.simDistVec, 0.5)
-            print("peaks", len(peaks), "troughs", len(troughs))
+            #print("peaks", len(peaks), "troughs", len(troughs))
 
         self.count += 1
         if ((len(peaks) >= numofCropRows and len(troughs) >= numofCropRows)):

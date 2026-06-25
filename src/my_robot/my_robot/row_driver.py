@@ -33,9 +33,16 @@ class RowDriverNode(Node):
         self.get_logger().info('Row driver ready. Send True to /autopilot/enable to start.')
 
     def enable_cb(self, msg: Bool):
+        was_enabled = self.enabled
         self.enabled = msg.data
         state = 'ENABLED' if self.enabled else 'DISABLED'
         self.get_logger().info(f'Autopilot drive: {state}')
+        if was_enabled and not self.enabled:
+            # rs485_bridge only stops on an explicit 0.0 — going silent here
+            # would leave the wheels holding the last forward_speed forever
+            cmd = Float64MultiArray()
+            cmd.data = [0.0] * 4
+            self.velocity_pub.publish(cmd)
 
     def publish_velocity(self):
         if not self.enabled:

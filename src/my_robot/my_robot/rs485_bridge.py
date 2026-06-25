@@ -71,7 +71,6 @@ _WHEEL_JOINTS = [
     'back_left_base_to_back_left_wheel',
 ]
 _STEER_JOINT = 'base_link_to_wheeling_mech'
-_TILT_JOINT  = 'front_wheels_base_to_depth_camera'
 
 
 class RS485Bridge(Node):
@@ -89,6 +88,7 @@ class RS485Bridge(Node):
         self.declare_parameter('hall_to_rads',  1.0)
         self.declare_parameter('mag_port',      '/dev/ttyUSB1')
         self.declare_parameter('mag_baudrate',  9600)
+        self.declare_parameter('bldc_min_power', 200.0)  # 0-255 floor once moving — cpptest found ~100 just clicks, 200+ actually spins the wheel
 
         modbus_port    = self.get_parameter('modbus_port').value
         modbus_baud    = self.get_parameter('modbus_baud').value
@@ -97,11 +97,26 @@ class RS485Bridge(Node):
         self._hall_to_rads = self.get_parameter('hall_to_rads').value
         mag_port       = self.get_parameter('mag_port').value
         mag_baud       = self.get_parameter('mag_baudrate').value
+        self._min_power    = self.get_parameter('bldc_min_power').value
 
-        # last commanded values
+        # last commanded values — stop is explicit (vel == 0.0) only; sources
+        # that drive continuously must publish a final 0.0 when they stop
+        # (see row_driver's enable_cb), rather than relying on a timeout here
         self._vel   = [0.0, 0.0, 0.0, 0.0]   # fr, fl, br, bl  (rad/s)
         self._steer = 0.0                      # rad
-        self._tilt  = 0.0                      # rad (stored for joint_states)
+
+        # per-wheel BLDC sequencing, matching the proven working reference at
+        # /home/alex/modbus_robot_controller: Enable is asserted once for all
+        # wheels at startup (_enable_all_bldc) and never touched again for
+        # ordinary driving. Each tick only re-sends Direction when it changes
+        # (one tick to settle before Speed follows, same as that reference's
+        # 50ms gap) and Speed when its value changes — a plain vel==0 just
+        # sends Speed=0 and leaves Enable/Direction latched, it does not do a
+        # full disable (only the old VIM-GUI style needed full re-enable).
+        # None = not yet set, forcing an initial write the first time the
+        # wheel is commanded to move.
+        self._bldc_dir = [None, None, None, None]
+        self._bldc_sent_power = [None, None, None, None]
 
         # actual velocities from Hall sensors
         self._hall_vel  = [0.0, 0.0, 0.0, 0.0]
@@ -116,6 +131,22 @@ class RS485Bridge(Node):
         self._devs = {}          # addr -> Instrument
         self._modbus_lock = threading.Lock()
         self._modbus_ok = False
+
+        # circuit breaker: a dead/disconnected address (e.g. separator addr=6
+        # with nothing wired up) takes far longer to fail than its configured
+        # 0.1s serial timeout — observed ~2.3s per failed transaction — and
+        # since the whole 20Hz tick is single-threaded, hammering it every
+        # tick collapses the real control-loop rate to ~1-2Hz, starving the
+        # BLDC ramp of the frequency it needs. Trip on the FIRST failure (a
+        # threshold>1 just means eating N slow timeouts before backing off,
+        # which barely helps) and back off with exponential cooldown, since
+        # an address that's dead tends to stay dead.
+        self._FAIL_THRESHOLD     = 1
+        self._FAIL_COOLDOWN      = 5.0
+        self._FAIL_COOLDOWN_MAX  = 60.0
+        self._addr_fail_count  = {}
+        self._addr_skip_until  = {}
+        self._addr_trip_count  = {}
 
         self.get_logger().info(f'Connecting to Modbus on {modbus_port} @ {modbus_baud} baud...')
         try:
@@ -142,8 +173,6 @@ class RS485Bridge(Node):
             Float64MultiArray, '/velocity_controller/commands',    self._vel_cb,   10)
         self.create_subscription(
             Float64MultiArray, '/position_controller/commands',    self._steer_cb, 10)
-        self.create_subscription(
-            Float64MultiArray, '/camera_tilt_controller/commands', self._tilt_cb,  10)
         self.create_subscription(
             Float64MultiArray, '/vim/motor_enable', self._motor_enable_cb, 10)
         for name in _VIM_MAP:
@@ -202,38 +231,86 @@ class RS485Bridge(Node):
 
     # ── minimalmodbus wrappers ────────────────────────────────────────────────
 
+    def _breaker_blocked(self, addr: int) -> bool:
+        until = self._addr_skip_until.get(addr, 0.0)
+        if until and time.monotonic() < until:
+            return True
+        return False
+
+    def _breaker_on_success(self, addr: int):
+        self._addr_fail_count[addr] = 0
+        self._addr_trip_count[addr] = 0
+
+    def _breaker_on_failure(self, addr: int):
+        n = self._addr_fail_count.get(addr, 0) + 1
+        self._addr_fail_count[addr] = n
+        if n >= self._FAIL_THRESHOLD:
+            self._addr_fail_count[addr] = 0
+            trips = self._addr_trip_count.get(addr, 0) + 1
+            self._addr_trip_count[addr] = trips
+            cooldown = min(self._FAIL_COOLDOWN_MAX, self._FAIL_COOLDOWN * (2 ** (trips - 1)))
+            self._addr_skip_until[addr] = time.monotonic() + cooldown
+            self.get_logger().warn(
+                f'[BREAKER] addr={addr} failed — backing off {cooldown:.0f}s (trip #{trips})',
+                throttle_duration_sec=1.0)
+
     def _write_bit(self, addr: int, coil: int, value: bool):
         """Write Single Coil (FC05) through minimalmodbus."""
         if not self._modbus_ok or addr not in self._devs:
+            self.get_logger().warn(
+                f'[TX SKIP] addr={addr} FC05 coil={coil} val={int(value)} — modbus_ok={self._modbus_ok}, known_addr={addr in self._devs}',
+                throttle_duration_sec=2.0)
+            return
+        if self._breaker_blocked(addr):
             return
         with self._modbus_lock:
             try:
                 self._devs[addr].write_bit(coil, int(value), 5)
-            except minimalmodbus.ModbusException as e:
-                self.get_logger().warn(f'Modbus write_bit addr={addr} coil={coil}: {e}',
+                self.get_logger().info(f'[TX OK] addr={addr} FC05 coil={coil} val={int(value)}')
+                self._breaker_on_success(addr)
+            # broad on purpose: minimalmodbus's exception hierarchy varies by
+            # version (ModbusException vs MasterReportedException/IOError),
+            # and a raw serial timeout/OSError must not vanish silently either
+            except Exception as e:
+                self.get_logger().warn(f'[TX FAIL] addr={addr} FC05 coil={coil} val={int(value)}: {type(e).__name__}: {e}',
                                        throttle_duration_sec=2.0)
+                self._breaker_on_failure(addr)
 
     def _write_register(self, addr: int, reg: int, value: int):
         """Write Single Register (FC06) through minimalmodbus."""
         if not self._modbus_ok or addr not in self._devs:
+            self.get_logger().warn(
+                f'[TX SKIP] addr={addr} FC06 reg={reg} val={value} — modbus_ok={self._modbus_ok}, known_addr={addr in self._devs}',
+                throttle_duration_sec=2.0)
+            return
+        if self._breaker_blocked(addr):
             return
         with self._modbus_lock:
             try:
                 self._devs[addr].write_register(reg, value, 0, 6, False)
-            except minimalmodbus.ModbusException as e:
-                self.get_logger().warn(f'Modbus write_reg addr={addr} reg={reg}: {e}',
+                self.get_logger().info(f'[TX OK] addr={addr} FC06 reg={reg} val={value}',
+                                       throttle_duration_sec=0.5)
+                self._breaker_on_success(addr)
+            except Exception as e:
+                self.get_logger().warn(f'[TX FAIL] addr={addr} FC06 reg={reg} val={value}: {type(e).__name__}: {e}',
                                        throttle_duration_sec=2.0)
+                self._breaker_on_failure(addr)
 
     def _read_register(self, addr: int, reg: int) -> int:
         """Read Input Register (FC04) through minimalmodbus and return raw 16-bit value."""
         if not self._modbus_ok or addr not in self._devs:
             return 0
+        if self._breaker_blocked(addr):
+            return 0
         with self._modbus_lock:
             try:
-                return self._devs[addr].read_register(reg, 0, 4, False)
-            except minimalmodbus.ModbusException as e:
-                self.get_logger().warn(f'Modbus read_reg addr={addr} reg={reg}: {e}',
+                value = self._devs[addr].read_register(reg, 0, 4, False)
+                self._breaker_on_success(addr)
+                return value
+            except Exception as e:
+                self.get_logger().warn(f'[RX FAIL] addr={addr} FC04 reg={reg}: {type(e).__name__}: {e}',
                                        throttle_duration_sec=2.0)
+                self._breaker_on_failure(addr)
                 return 0
 
     # ── Subscribers ───────────────────────────────────────────────────────────
@@ -241,17 +318,18 @@ class RS485Bridge(Node):
     def _vel_cb(self, msg: Float64MultiArray):
         d = list(msg.data)
         if len(d) >= 4:
-            self._vel = d[:4]
+            new_vel = d[:4]
         elif len(d) >= 1:
-            self._vel = [d[0]] * 4
+            new_vel = [d[0]] * 4
+        else:
+            return
+        if new_vel != self._vel:
+            self.get_logger().info(f'[VEL] /velocity_controller/commands: {self._vel} -> {new_vel}')
+        self._vel = new_vel
 
     def _steer_cb(self, msg: Float64MultiArray):
         if msg.data:
             self._steer = msg.data[0]
-
-    def _tilt_cb(self, msg: Float64MultiArray):
-        if msg.data:
-            self._tilt = msg.data[0]
 
     def _vim_cb(self, name: str, msg: Int8):
         self._vim_cmds[name] = int(msg.data)
@@ -281,12 +359,42 @@ class RS485Bridge(Node):
         self._publish_joint_states()
 
     def _send_bldc(self):
-        """Convert rad/s velocities to 0-255 power and send direction + power."""
-        for addr, vel in zip(_BLDC_ADDRS, self._vel):
-            power   = min(255, int(abs(vel) / self._max_speed * 255))
-            forward = vel >= 0.0
-            self._write_bit(addr, 1, forward)
-            self._write_register(addr, 0, power)
+        """Direction -> Speed on every change, matching the proven reference
+        at /home/alex/modbus_robot_controller (processDriveCommand): Enable is
+        set once for all wheels at startup, never touched again here. A plain
+        vel==0 just sends Speed=0 and leaves Enable/Direction latched — no
+        per-stop disable, no multi-tick settle handshake, so a short tap is
+        enough to actually reach the board instead of being undone before the
+        old start sequence could finish.
+
+        Direction coil 1: False=forward, True=reverse (matches DirectionControlDevN
+        in the original — Contor_System_VIM_reconstructed.py:389-391)."""
+        status = []
+        for i, (addr, vel) in enumerate(zip(_BLDC_ADDRS, self._vel)):
+            reverse = vel < 0.0
+
+            if self._bldc_dir[i] != reverse:
+                self._write_bit(addr, 1, reverse)
+                self._bldc_dir[i] = reverse
+                status.append(f'{addr}:DIR={"REV" if reverse else "FWD"}')
+                continue   # one tick to settle before sending speed (reference's 50ms gap)
+
+            if vel == 0.0:
+                speed = 0
+            else:
+                # below ~200/255 the board just clicks without actually
+                # spinning the wheel (confirmed empirically) — never ask for
+                # less than that once we actually want to move
+                speed = int(min(255.0, max(abs(vel) / self._max_speed * 255, self._min_power)))
+
+            if speed != self._bldc_sent_power[i]:
+                self._write_register(addr, 0, speed)
+                self._bldc_sent_power[i] = speed
+                status.append(f'{addr}:vel={vel:.2f},pwr={speed}')
+            else:
+                status.append(f'{addr}:vel={vel:.2f},pwr={speed}(held)')
+
+        self.get_logger().info(f'[BLDC tick] {" | ".join(status)}', throttle_duration_sec=1.0)
 
     def _send_steering(self):
         steer = self._steer
@@ -325,9 +433,9 @@ class RS485Bridge(Node):
     def _publish_joint_states(self):
         js = JointState()
         js.header.stamp = self.get_clock().now().to_msg()
-        js.name     = _WHEEL_JOINTS + [_STEER_JOINT, _TILT_JOINT]
-        js.velocity = list(self._hall_vel) + [0.0,         0.0]
-        js.position = [0.0] * 4            + [self._steer, self._tilt]
+        js.name     = _WHEEL_JOINTS + [_STEER_JOINT]
+        js.velocity = list(self._hall_vel) + [0.0]
+        js.position = [0.0] * 4            + [self._steer]
         self._js_pub.publish(js)
 
     # ── Magnetometer reader (background thread) ───────────────────────────────

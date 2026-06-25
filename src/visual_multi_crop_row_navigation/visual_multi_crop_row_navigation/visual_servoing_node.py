@@ -98,7 +98,9 @@ class VisualServoingNode(Node):
         # Конец ряда: публикуем True когда imageProc.cropRowEnd поднят
         self.row_end_pub = self.create_publisher(Bool, '/vs_nav/row_end', 10)
         # Пауза: mission node пишет False → VS не публикует команды руля
-        self.vs_active = True
+        # По умолчанию ВЫКЛ — иначе руль дёргается сразу после старта, до того
+        # как оператор явно включит VS Navigator (см. AgroGUI AutopilotTab._toggle_vs).
+        self.vs_active = False
         self.create_subscription(Bool, '/mission/vs_active', self._vs_active_cb, 10)
         # declare all parameters and their defaults
         self.declare_parameters('', [

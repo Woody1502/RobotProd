@@ -14,6 +14,7 @@ services:
       # IMU / GPS (serial)
       - /dev/ttyUSB0:/dev/ttyUSB0
       - /dev/ttyUSB1:/dev/ttyUSB1
+      #- /dev/pts/10:/dev/ttyVCOM1
     volumes:
       - ./cyclone_dds.xml:/cyclone_dds.xml:ro
       - ./src:/ros2_ws/src:ro

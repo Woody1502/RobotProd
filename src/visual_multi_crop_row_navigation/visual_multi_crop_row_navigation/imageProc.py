@@ -117,7 +117,7 @@ class imageProc:
             self.mask, self.greenIDX, self.plantObjects2D, self.plantCenters2D = self.processRGBImage(
                 self.primaryRGBImg)
             self.numPlantsInScene = len(self.plantCenters2D[0])
-            print('self.numPlantsInScene',self.numPlantsInScene)
+            #print('self.numPlantsInScene',self.numPlantsInScene)
         if not self.isInitialized:
             print("#[INF] Find Crop Lane")
             try:
@@ -238,7 +238,7 @@ class imageProc:
         else:
             qualifiedLines = []
             windowLocations = []
-        print(qualifiedLines,windowLocations)
+        #print(qualifiedLines,windowLocations)
         qualifiedLines = qualifiedLines[~np.all(qualifiedLines == 0, axis=1)]
         windowLocations = windowLocations[~np.all(windowLocations == 0, axis=1)]
 
