@@ -8,6 +8,12 @@ services:
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
       - ROS_DOMAIN_ID=42
       - CYCLONEDDS_URI=/cyclone_dds.xml
+      # Адрес WiFi-RS485 адаптера, к которому socat подключается изнутри
+      # контейнера. По умолчанию — настоящее железо. Чтобы прогнать мост
+      # против эмулятора (сервис modbus_emulator ниже) без реального робота:
+      #   VIM_HOST=127.0.0.1 VIM_PORT=8081 docker compose up
+      - VIM_HOST=${VIM_HOST:-192.168.5.42}
+      - VIM_PORT=${VIM_PORT:-81}
     devices:
       # Камера (RealSense / USB camera)
       - /dev/video0:/dev/video0
@@ -27,3 +33,18 @@ services:
                source install/setup.bash &&
                ros2 launch my_robot robot.launch.py"
     restart: unless-stopped
+
+  # Эмулятор WiFi-RS485 адаптера для теста без реального робота. Не
+  # запускается автоматически вместе с robot — поднимать отдельно и
+  # указывать VIM_HOST/VIM_PORT для сервиса robot (см. выше), иначе
+  # оба будут пытаться занять то же TCP-соединение, что и настоящее железо.
+  modbus_emulator:
+    build: ./modbus_emulator
+    container_name: modbus_emulator
+    network_mode: host
+    environment:
+      - EMU_PORT=${VIM_PORT:-81}
+    volumes:
+      # лог переживает остановку/удаление контейнера — смотреть после теста
+      - ./modbus_emulator/logs:/app/logs
+    profiles: ["sim"]

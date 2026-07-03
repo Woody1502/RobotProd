@@ -1,8 +1,19 @@
 #!/bin/bash
 set -e
 
-echo "Starting socat inside container..."
-socat -d -d pty,raw,echo=0,link=/dev/ttyVCOM1,waitlock=/tmp/ttyVCOM1.lock,nonblock=1 tcp:192.168.5.42:81 &
+# Адрес WiFi-RS485 адаптера. По умолчанию — настоящее железо; для теста
+# против эмулятора (modbus_emulator) переопределить VIM_HOST/VIM_PORT
+# (см. docker-compose.yml).
+VIM_HOST="${VIM_HOST:-192.168.5.42}"
+VIM_PORT="${VIM_PORT:-81}"
+
+# lock-файл от предыдущего socat может остаться при крэше контейнера
+# (restart: unless-stopped сохраняет /tmp) — удаляем, иначе новый socat
+# зависнет на waitlock и /dev/ttyVCOM1 никогда не создастся
+rm -f /tmp/ttyVCOM1.lock
+
+echo "Starting socat inside container (target: ${VIM_HOST}:${VIM_PORT})..."
+socat -d -d pty,raw,echo=0,link=/dev/ttyVCOM1,waitlock=/tmp/ttyVCOM1.lock,nonblock=1 tcp:${VIM_HOST}:${VIM_PORT} &
 SOCAT_PID=$!
 
 echo "=========================================="
@@ -38,7 +49,7 @@ else
     echo "⚠ /dev/ttyVCOM1 not found!"
     # Создаем порт через socat внутри контейнера
     echo "Starting socat inside container..."
-    socat -d -d pty,raw,echo=0,link=/dev/ttyVCOM1,waitlock=/tmp/ttyVCOM1.lock tcp:192.168.5.42:81 &
+    socat -d -d pty,raw,echo=0,link=/dev/ttyVCOM1,waitlock=/tmp/ttyVCOM1.lock tcp:${VIM_HOST}:${VIM_PORT} &
     sleep 3
     chmod 666 /dev/ttyVCOM1
 fi

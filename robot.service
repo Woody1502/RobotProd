@@ -1,0 +1,16 @@
+[Unit]
+Description=AgroRobot production stack
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/vim/RobotProd
+ExecStart=/usr/bin/docker compose up -d robot
+ExecStop=/usr/bin/docker compose down robot
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

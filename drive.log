@@ -1,0 +1,118 @@
+Attaching to agrorobot_prod
+agrorobot_prod  | Starting socat inside container (target: 192.168.5.42:81)...
+agrorobot_prod  | ==========================================
+agrorobot_prod  | Starting AgriRobot Production Container
+agrorobot_prod  | ==========================================
+agrorobot_prod  | ✓ minimalmodbus installed
+agrorobot_prod  | ✓ /dev/ttyVCOM1 exists
+agrorobot_prod  | lrwxrwxrwx 1 root root 10 Jul  2 14:19 /dev/ttyVCOM1 -> /dev/pts/0
+agrorobot_prod  | Fixing permissions...
+agrorobot_prod  | Testing port...
+agrorobot_prod  | OK
+agrorobot_prod  | ✓ Port is accessible
+agrorobot_prod  | Starting >>> my_robot
+agrorobot_prod  | Starting >>> visual_multi_crop_row_navigation
+agrorobot_prod  | Finished <<< visual_multi_crop_row_navigation [1.13s]
+agrorobot_prod  | Finished <<< my_robot [1.14s]
+agrorobot_prod  | 
+agrorobot_prod  | Summary: 2 packages finished [1.22s]
+agrorobot_prod  | [INFO] [launch]: All log files can be found below /root/.ros/log/2026-07-02-14-19-07-311117-vim-MIX-1
+agrorobot_prod  | [INFO] [launch]: Default logging verbosity is set to INFO
+agrorobot_prod  | [INFO] [robot_state_publisher-1]: process started with pid [68]
+agrorobot_prod  | [INFO] [rs485_bridge-2]: process started with pid [69]
+agrorobot_prod  | [INFO] [usb_camera-3]: process started with pid [70]
+agrorobot_prod  | [INFO] [gamepad-4]: process started with pid [71]
+agrorobot_prod  | [INFO] [ekf_node-5]: process started with pid [72]
+agrorobot_prod  | [INFO] [ekf_node-6]: process started with pid [73]
+agrorobot_prod  | [robot_state_publisher-1] [INFO] [1783001947.404655803] [robot_state_publisher]: Robot initialized
+agrorobot_prod  | [gamepad-4] [INFO] [1783001947.632234290] [gamepad_node]: GamepadNode started — device: /dev/input/js0
+agrorobot_prod  | [gamepad-4] [INFO] [1783001947.632607299] [gamepad_node]: [GP] opened /dev/input/js0
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001947.655841898] [rs485_bridge]: Connecting to Modbus on /dev/ttyVCOM1 @ 38400 baud...
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001947.656836333] [rs485_bridge]: Serial port /dev/ttyVCOM1 opened @ 38400 baud — 11 Modbus addresses registered
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001947.757948462] [rs485_bridge]: [TX FAIL] addr=6 FC05 coil=0 val=1: NoResponseError: No communication with the instrument (no answer)
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001947.758548119] [rs485_bridge]: [BREAKER] addr=6 failed — backing off 5s (trip #1)
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001947.758927997] [rs485_bridge]: Enable coil sent to separator (addr 6)
+agrorobot_prod  | [usb_camera-3] [ WARN:0@0.166] global ./modules/videoio/src/cap_gstreamer.cpp (862) isPipelinePlaying OpenCV | GStreamer warning: GStreamer: pipeline have not been created
+agrorobot_prod  | [usb_camera-3] [INFO] [1783001947.844040287] [usb_camera]: Camera device 0 opened (1280x720 @ 30.0 fps)
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001948.885035249] [rs485_bridge]: Modbus FAIL: 1:manipulator, 2:bucket, 3:frame, 4:bunker, 5:flaps, 6:separator(BLDC), 7:steering, 8:motor-FL, 9:motor-FR, 10:motor-RL, 11:motor-RR
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001948.887328212] [rs485_bridge]: Magnetometer port /dev/ttyUSB1 unavailable: [Errno 2] could not open port /dev/ttyUSB1: [Errno 2] No such file or directory: '/dev/ttyUSB1'
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001948.945654561] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001949.047988513] [rs485_bridge]: [TX FAIL] addr=7 FC06 reg=0 val=0: NoResponseError: No communication with the instrument (no answer)
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001949.049244181] [rs485_bridge]: [BREAKER] addr=7 failed — backing off 5s (trip #1)
+agrorobot_prod  | [INFO] [acker_odom-7]: process started with pid [169]
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001949.563910906] [rs485_bridge]: [WATCHDOG] no /velocity_controller/commands for >1.5s — forcing stop (last value was [0.0, 0.0, 0.0, 0.0])
+agrorobot_prod  | [acker_odom-7] [INFO] [1783001949.657763955] [acker_odom]: Ackerman Odometry node initialized
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001949.746711119] [rs485_bridge]: [RX FAIL] addr=9 FC04 reg=0: NoResponseError: No communication with the instrument (no answer)
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001950.057616921] [rs485_bridge]: [BREAKER] addr=10 failed — backing off 5s (trip #1)
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001950.060633459] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001951.097045305] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [INFO] [row_driver-8]: process started with pid [182]
+agrorobot_prod  | [row_driver-8] [INFO] [1783001951.563806506] [row_driver]: Row driver ready. Send True to /autopilot/enable to start.
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001952.146724020] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001953.196724194] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [INFO] [field_mission-9]: process started with pid [195]
+agrorobot_prod  | [INFO] [vs_navigation-10]: process started with pid [196]
+agrorobot_prod  | [field_mission-9] [INFO] [1783001953.570813591] [field_mission]: [MISSION] Ready.
+agrorobot_prod  | [field_mission-9]   Start mission : ros2 topic pub --once /mission/start std_msgs/msg/Bool '{data: true}'
+agrorobot_prod  | [field_mission-9]   Emergency stop: ros2 topic pub --once /mission/stop  std_msgs/msg/Bool '{data: true}'
+agrorobot_prod  | [field_mission-9]   [DEBUG] Goto  : ros2 topic pub --once /mission/goto  geometry_msgs/msg/Point '{x: 5.0, y: 0.0, z: 0.0}'
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001954.196060394] [rs485_bridge]: [TX FAIL] addr=7 FC06 reg=0 val=0: NoResponseError: No communication with the instrument (no answer)
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001954.196368960] [rs485_bridge]: [BREAKER] addr=7 failed — backing off 10s (trip #2)
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001954.197312711] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001954.946161324] [rs485_bridge]: [RX FAIL] addr=9 FC04 reg=0: NoResponseError: No communication with the instrument (no answer)
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001955.252599409] [rs485_bridge]: [BREAKER] addr=10 failed — backing off 10s (trip #2)
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001955.253765005] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001956.267851555] [rs485_bridge]: [VEL] /velocity_controller/commands: [0.0, 0.0, 0.0, 0.0] -> [-3.0137028107547223, -3.0137028107547223, -3.0137028107547223, -3.0137028107547223]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001956.274797685] [rs485_bridge]: [VEL] /velocity_controller/commands: [-3.0137028107547223, -3.0137028107547223, -3.0137028107547223, -3.0137028107547223] -> [-10.0, -10.0, -10.0, -10.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001956.295488891] [rs485_bridge]: [BLDC tick] 9:ENABLE | 8:ENABLE | 11:ENABLE | 10:ENABLE
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001956.491836742] [rs485_bridge]: [VEL] /velocity_controller/commands: [-10.0, -10.0, -10.0, -10.0] -> [0.0, 0.0, 0.0, 0.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001956.890558112] [rs485_bridge]: [VEL] /velocity_controller/commands: [0.0, 0.0, 0.0, 0.0] -> [-3.2093264564958646, -3.2093264564958646, -3.2093264564958646, -3.2093264564958646]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001956.898621618] [rs485_bridge]: [VEL] /velocity_controller/commands: [-3.2093264564958646, -3.2093264564958646, -3.2093264564958646, -3.2093264564958646] -> [-6.6731772820215465, -6.6731772820215465, -6.6731772820215465, -6.6731772820215465]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001956.906386421] [rs485_bridge]: [VEL] /velocity_controller/commands: [-6.6731772820215465, -6.6731772820215465, -6.6731772820215465, -6.6731772820215465] -> [-10.0, -10.0, -10.0, -10.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.179638116] [rs485_bridge]: [VEL] /velocity_controller/commands: [-10.0, -10.0, -10.0, -10.0] -> [-9.354228339487898, -9.354228339487898, -9.354228339487898, -9.354228339487898]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.186579837] [rs485_bridge]: [VEL] /velocity_controller/commands: [-9.354228339487898, -9.354228339487898, -9.354228339487898, -9.354228339487898] -> [-9.119541001617481, -9.119541001617481, -9.119541001617481, -9.119541001617481]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.197100124] [rs485_bridge]: [VEL] /velocity_controller/commands: [-9.119541001617481, -9.119541001617481, -9.119541001617481, -9.119541001617481] -> [-7.06472975859859, -7.06472975859859, -7.06472975859859, -7.06472975859859]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.202466692] [rs485_bridge]: [VEL] /velocity_controller/commands: [-7.06472975859859, -7.06472975859859, -7.06472975859859, -7.06472975859859] -> [-6.868800927762688, -6.868800927762688, -6.868800927762688, -6.868800927762688]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.210383294] [rs485_bridge]: [VEL] /velocity_controller/commands: [-6.868800927762688, -6.868800927762688, -6.868800927762688, -6.868800927762688] -> [-6.516617328409681, -6.516617328409681, -6.516617328409681, -6.516617328409681]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.218302352] [rs485_bridge]: [VEL] /velocity_controller/commands: [-6.516617328409681, -6.516617328409681, -6.516617328409681, -6.516617328409681] -> [-4.442274239326151, -4.442274239326151, -4.442274239326151, -4.442274239326151]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.226924051] [rs485_bridge]: [VEL] /velocity_controller/commands: [-4.442274239326151, -4.442274239326151, -4.442274239326151, -4.442274239326151] -> [-4.3443098239082, -4.3443098239082, -4.3443098239082, -4.3443098239082]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.234767126] [rs485_bridge]: [VEL] /velocity_controller/commands: [-4.3443098239082, -4.3443098239082, -4.3443098239082, -4.3443098239082] -> [-4.187749870296335, -4.187749870296335, -4.187749870296335, -4.187749870296335]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.242644304] [rs485_bridge]: [VEL] /velocity_controller/commands: [-4.187749870296335, -4.187749870296335, -4.187749870296335, -4.187749870296335] -> [-3.9921262245551925, -3.9921262245551925, -3.9921262245551925, -3.9921262245551925]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.250352221] [rs485_bridge]: [VEL] /velocity_controller/commands: [-3.9921262245551925, -3.9921262245551925, -3.9921262245551925, -3.9921262245551925] -> [-3.6985381633960994, -3.6985381633960994, -3.6985381633960994, -3.6985381633960994]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.258566936] [rs485_bridge]: [VEL] /velocity_controller/commands: [-3.6985381633960994, -3.6985381633960994, -3.6985381633960994, -3.6985381633960994] -> [-3.346354564043092, -3.346354564043092, -3.346354564043092, -3.346354564043092]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.266311812] [rs485_bridge]: [VEL] /velocity_controller/commands: [-3.346354564043092, -3.346354564043092, -3.346354564043092, -3.346354564043092] -> [-2.974639118625446, -2.974639118625446, -2.974639118625446, -2.974639118625446]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.274446508] [rs485_bridge]: [VEL] /velocity_controller/commands: [-2.974639118625446, -2.974639118625446, -2.974639118625446, -2.974639118625446] -> [-0.6262398144474624, -0.6262398144474624, -0.6262398144474624, -0.6262398144474624]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.282560894] [rs485_bridge]: [VEL] /velocity_controller/commands: [-0.6262398144474624, -0.6262398144474624, -0.6262398144474624, -0.6262398144474624] -> [-0.46967986083559676, -0.46967986083559676, -0.46967986083559676, -0.46967986083559676]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.290201746] [rs485_bridge]: [VEL] /velocity_controller/commands: [-0.46967986083559676, -0.46967986083559676, -0.46967986083559676, -0.46967986083559676] -> [-0.1565599536118656, -0.1565599536118656, -0.1565599536118656, -0.1565599536118656]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.298526985] [rs485_bridge]: [VEL] /velocity_controller/commands: [-0.1565599536118656, -0.1565599536118656, -0.1565599536118656, -0.1565599536118656] -> [0.0, 0.0, 0.0, 0.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.345932782] [rs485_bridge]: [BLDC tick] 9:STOP(speed=0) | 8:STOP(speed=0) | 11:STOP(speed=0) | 10:STOP(speed=0)
+agrorobot_prod  | [gamepad-4] [INFO] [1783001957.819247959] [gamepad_node]: [GP] автопилот + VS Navigator → ВКЛ
+agrorobot_prod  | [row_driver-8] [INFO] [1783001957.819688093] [row_driver]: Autopilot drive: ENABLED
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001957.857468774] [rs485_bridge]: [VEL] /velocity_controller/commands: [0.0, 0.0, 0.0, 0.0] -> [1.5, 1.5, 1.5, 1.5]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001958.396752226] [rs485_bridge]: [BLDC tick] 9:vel=1.50,pwr=67 | 8:vel=1.50,pwr=67 | 11:vel=1.50,pwr=67 | 10:vel=1.50,pwr=67
+agrorobot_prod  | [gamepad-4] [INFO] [1783001958.698716451] [gamepad_node]: [GP] автопилот + VS Navigator → ВЫКЛ
+agrorobot_prod  | [row_driver-8] [INFO] [1783001958.698754772] [row_driver]: Autopilot drive: DISABLED
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001958.700104652] [rs485_bridge]: [VEL] /velocity_controller/commands: [1.5, 1.5, 1.5, 1.5] -> [0.0, 0.0, 0.0, 0.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001959.397110447] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001960.042953884] [rs485_bridge]: [VEL] /velocity_controller/commands: [0.0, 0.0, 0.0, 0.0] -> [5.8903775139622185, 5.8903775139622185, 5.8903775139622185, 5.8903775139622185]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001960.050651492] [rs485_bridge]: [VEL] /velocity_controller/commands: [5.8903775139622185, 5.8903775139622185, 5.8903775139622185, 5.8903775139622185] -> [10.0, 10.0, 10.0, 10.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001960.445545590] [rs485_bridge]: [BLDC tick] 9:vel=10.00,pwr=52 | 8:vel=10.00,pwr=52 | 11:vel=10.00,pwr=52 | 10:vel=10.00,pwr=52
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001960.666897755] [rs485_bridge]: [VEL] /velocity_controller/commands: [10.0, 10.0, 10.0, 10.0] -> [8.90408032471694, 8.90408032471694, 8.90408032471694, 8.90408032471694]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001960.674675686] [rs485_bridge]: [VEL] /velocity_controller/commands: [8.90408032471694, 8.90408032471694, 8.90408032471694, 8.90408032471694] -> [0.0, 0.0, 0.0, 0.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001960.899829702] [rs485_bridge]: [VEL] /velocity_controller/commands: [0.0, 0.0, 0.0, 0.0] -> [-4.892422254097109, -4.892422254097109, -4.892422254097109, -4.892422254097109]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001960.906425174] [rs485_bridge]: [VEL] /velocity_controller/commands: [-4.892422254097109, -4.892422254097109, -4.892422254097109, -4.892422254097109] -> [-10.0, -10.0, -10.0, -10.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001961.179253520] [rs485_bridge]: [VEL] /velocity_controller/commands: [-10.0, -10.0, -10.0, -10.0] -> [-6.712240974150823, -6.712240974150823, -6.712240974150823, -6.712240974150823]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001961.186754469] [rs485_bridge]: [VEL] /velocity_controller/commands: [-6.712240974150823, -6.712240974150823, -6.712240974150823, -6.712240974150823] -> [-2.4655903805658133, -2.4655903805658133, -2.4655903805658133, -2.4655903805658133]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001961.194410919] [rs485_bridge]: [VEL] /velocity_controller/commands: [-2.4655903805658133, -2.4655903805658133, -2.4655903805658133, -2.4655903805658133] -> [0.0, 0.0, 0.0, 0.0]
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001961.497481856] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001962.545758106] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001962.696266733] [rs485_bridge]: [WATCHDOG] no /velocity_controller/commands for >1.5s — forcing stop (last value was [0.0, 0.0, 0.0, 0.0])
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001963.547091717] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001964.299537566] [rs485_bridge]: [TX FAIL] addr=7 FC06 reg=0 val=0: NoResponseError: No communication with the instrument (no answer)
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001964.300732173] [rs485_bridge]: [BREAKER] addr=7 failed — backing off 20s (trip #3)
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001964.596918068] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001965.149274191] [rs485_bridge]: [RX FAIL] addr=9 FC04 reg=0: NoResponseError: No communication with the instrument (no answer)
+agrorobot_prod  | [rs485_bridge-2] [WARN] [1783001965.357942136] [rs485_bridge]: [BREAKER] addr=11 failed — backing off 20s (trip #3)
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001965.646891802] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001966.646939764] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle
+agrorobot_prod  | [rs485_bridge-2] [INFO] [1783001967.695910695] [rs485_bridge]: [BLDC tick] 9:idle | 8:idle | 11:idle | 10:idle

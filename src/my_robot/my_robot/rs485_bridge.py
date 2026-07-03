@@ -25,7 +25,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray, Float32, Int8
+from std_msgs.msg import Float64MultiArray, Float32, Int8, Bool
 from sensor_msgs.msg import JointState
 
 try:
@@ -89,6 +89,8 @@ class RS485Bridge(Node):
         self.declare_parameter('mag_port',      '/dev/ttyUSB1')
         self.declare_parameter('mag_baudrate',  9600)
         self.declare_parameter('bldc_min_power', 200.0)  # 0-255 floor once moving — cpptest found ~100 just clicks, 200+ actually spins the wheel
+        self.declare_parameter('bldc_ramp_rate', 150.0)  # power units/sec — soft-start so autopilot doesn't lurch straight to bldc_min_power
+        self.declare_parameter('vel_timeout', 1.5)  # sec — safety net only: if no /velocity_controller/commands arrives at all (lost release event, dropped message), force a stop. Long enough to never cut off a real held command.
 
         modbus_port    = self.get_parameter('modbus_port').value
         modbus_baud    = self.get_parameter('modbus_baud').value
@@ -98,25 +100,35 @@ class RS485Bridge(Node):
         mag_port       = self.get_parameter('mag_port').value
         mag_baud       = self.get_parameter('mag_baudrate').value
         self._min_power    = self.get_parameter('bldc_min_power').value
+        self._power_step   = self.get_parameter('bldc_ramp_rate').value / rate
+        self._vel_timeout  = self.get_parameter('vel_timeout').value
 
-        # last commanded values — stop is explicit (vel == 0.0) only; sources
-        # that drive continuously must publish a final 0.0 when they stop
-        # (see row_driver's enable_cb), rather than relying on a timeout here
+        # last commanded values — stop is normally explicit (vel == 0.0);
+        # _vel_last_rx below is only a safety net for a lost stop signal, not
+        # the primary mechanism (see row_driver's enable_cb for the primary fix)
         self._vel   = [0.0, 0.0, 0.0, 0.0]   # fr, fl, br, bl  (rad/s)
-        self._steer = 0.0                      # rad
+        self._vel_last_rx = time.monotonic()
+        self._vel_watchdog_tripped = False
+        self._steer       = 0.0    # rad — last received angle
+        self._steer_dirty = False  # True when a new angle arrived but not yet written
+        self._steer_sent_val = None  # last val (0/1/2) actually written to Modbus
+        self._vs_active   = False  # mirrors /mission/vs_active
 
-        # per-wheel BLDC sequencing, matching the proven working reference at
-        # /home/alex/modbus_robot_controller: Enable is asserted once for all
-        # wheels at startup (_enable_all_bldc) and never touched again for
-        # ordinary driving. Each tick only re-sends Direction when it changes
-        # (one tick to settle before Speed follows, same as that reference's
-        # 50ms gap) and Speed when its value changes — a plain vel==0 just
-        # sends Speed=0 and leaves Enable/Direction latched, it does not do a
-        # full disable (only the old VIM-GUI style needed full re-enable).
-        # None = not yet set, forcing an initial write the first time the
-        # wheel is commanded to move.
+        # per-wheel BLDC lifecycle: a wheel stays fully disabled until a
+        # movement command actually arrives — no Enable at robot startup.
+        # 'idle' -> (vel != 0) -> 'enabling' -> 'speeding' -> 'running'
+        # 'running' -> (vel == 0, or a direction reversal) -> 'stopping_dir'
+        #           -> 'stopping_enable' -> 'idle'
+        # One state transition per tick (~50ms), matching the proven Enable
+        # -> Speed -> Direction handshake gap; a direction reversal mid-run
+        # is treated as a full stop + fresh restart, not just flipping the
+        # coil under an already-held speed.
+        self._bldc_state = ['idle', 'idle', 'idle', 'idle']
         self._bldc_dir = [None, None, None, None]
         self._bldc_sent_power = [None, None, None, None]
+        # ramped power (float, pre-rounding) so speed eases toward target
+        # instead of snapping straight to bldc_min_power
+        self._bldc_power = [0.0, 0.0, 0.0, 0.0]
 
         # actual velocities from Hall sensors
         self._hall_vel  = [0.0, 0.0, 0.0, 0.0]
@@ -124,14 +136,11 @@ class RS485Bridge(Node):
 
         # VIM actuator state
         self._vim_cmds      = {name: 0 for name in _VIM_MAP}
+        self._vim_sent       = {name: (None, None) for name in _VIM_MAP}  # last (ch0,ch1) actually written
         self._separator_cmd = 0   # 0=stop, 1=forward(up), 2=reverse(down)
+        self._separator_dir_sent   = None
+        self._separator_speed_sent = None
         self._motor_enables = [True, True, True, True]
-
-        # edge-triggered write caches — only send Modbus frame when value changes;
-        # prevents VIM (10 writes/tick) and steering (1 write/tick) from saturating
-        # the bus and delaying BLDC speed writes
-        self._vim_sent   = {}   # (addr, reg) -> last written value
-        self._steer_sent = None # last written steering relay value (0/1/2)
 
         # ── Modbus instruments (all share the same virtual port) ──────────────
         self._devs = {}          # addr -> Instrument
@@ -158,7 +167,7 @@ class RS485Bridge(Node):
         try:
             self._init_modbus(modbus_port, modbus_baud)
             self._modbus_ok = True
-            self._enable_all_bldc()
+            self._enable_separator()
             self._probe_devices()
         except Exception as e:
             self.get_logger().error(f'Modbus init failed on {modbus_port}: {e}')
@@ -187,6 +196,8 @@ class RS485Bridge(Node):
                 lambda msg, n=name: self._vim_cb(n, msg), 10)
         self.create_subscription(
             Int8, '/vim/separator', self._separator_cb, 10)
+        self.create_subscription(
+            Bool, '/mission/vs_active', self._vs_active_cb, 10)
 
         # ── Publishers ────────────────────────────────────────────────────────
         self._js_pub  = self.create_publisher(JointState, '/joint_states',        10)
@@ -208,12 +219,16 @@ class RS485Bridge(Node):
         self.get_logger().info(
             f'Serial port {port} opened @ {baud} baud — {len(self._devs)} Modbus addresses registered')
 
-    def _enable_all_bldc(self):
-        """Enable all BLDC boards (wheels + separator) once at startup (coil 0 = Enable)."""
-        for addr in _BLDC_ADDRS:
-            self._write_bit(addr, 0, True)
+    def _enable_separator(self):
+        """Enable the separator BLDC board once at startup (coil 0 = Enable).
+
+        Unlike the 4 drive wheels, the separator isn't part of the
+        enable-per-drive-command lifecycle the wheels now use — it's a
+        distinct subsystem controlled via /vim/separator, with its own
+        direction+speed handling in _send_actuators, so it keeps the old
+        always-enabled behavior."""
         self._write_bit(_SEPARATOR_ADDR, 0, True)
-        self.get_logger().info('Enable coil sent to all BLDC boards (addr 6, 8-11)')
+        self.get_logger().info('Enable coil sent to separator (addr 6)')
 
     def _probe_devices(self):
         """Probe each board with FC03 read; log which ones respond."""
@@ -271,6 +286,11 @@ class RS485Bridge(Node):
             return
         with self._modbus_lock:
             try:
+                # a late-arriving response from a previous, slower transaction
+                # (the socat/TCP/WiFi hop to the RS485 bridge has no bounded
+                # latency like a direct serial link) can otherwise sit in the
+                # input buffer and get misread as this transaction's response
+                self._devs[addr].serial.reset_input_buffer()
                 self._devs[addr].write_bit(coil, int(value), 5)
                 self.get_logger().info(f'[TX OK] addr={addr} FC05 coil={coil} val={int(value)}')
                 self._breaker_on_success(addr)
@@ -293,6 +313,7 @@ class RS485Bridge(Node):
             return
         with self._modbus_lock:
             try:
+                self._devs[addr].serial.reset_input_buffer()
                 self._devs[addr].write_register(reg, value, 0, 6, False)
                 self.get_logger().info(f'[TX OK] addr={addr} FC06 reg={reg} val={value}',
                                        throttle_duration_sec=0.5)
@@ -310,6 +331,7 @@ class RS485Bridge(Node):
             return 0
         with self._modbus_lock:
             try:
+                self._devs[addr].serial.reset_input_buffer()
                 value = self._devs[addr].read_register(reg, 0, 4, False)
                 self._breaker_on_success(addr)
                 return value
@@ -331,18 +353,16 @@ class RS485Bridge(Node):
             return
         if new_vel != self._vel:
             self.get_logger().info(f'[VEL] /velocity_controller/commands: {self._vel} -> {new_vel}')
-            prev = self._vel
-            self._vel = new_vel
-            # bypass the next-tick wait: send speed=0 immediately so the robot
-            # doesn't coast for up to one full tick period after a stop command
-            if all(v == 0.0 for v in new_vel) and any(v != 0.0 for v in prev):
-                self._send_bldc()
-        else:
-            self._vel = new_vel
+        self._vel = new_vel
+        self._vel_last_rx = time.monotonic()
 
     def _steer_cb(self, msg: Float64MultiArray):
         if msg.data:
             self._steer = msg.data[0]
+            self._steer_dirty = True
+
+    def _vs_active_cb(self, msg: Bool):
+        self._vs_active = msg.data
 
     def _vim_cb(self, name: str, msg: Int8):
         self._vim_cmds[name] = int(msg.data)
@@ -371,45 +391,138 @@ class RS485Bridge(Node):
             self._hall_tick = 0
         self._publish_joint_states()
 
+    def _bldc_target(self, vel: float) -> float:
+        if vel == 0.0:
+            return 0.0
+        # below ~200/255 the board just clicks without actually spinning the
+        # wheel (confirmed empirically) — never ask for less than that once
+        # we actually want to move
+        return min(255.0, max(abs(vel) / self._max_speed * 255, self._min_power))
+
     def _send_bldc(self):
-        """Direction -> Speed on every change, matching the proven reference
-        at /home/alex/modbus_robot_controller (processDriveCommand): Enable is
-        set once for all wheels at startup, never touched again here. A plain
-        vel==0 just sends Speed=0 and leaves Enable/Direction latched — no
-        per-stop disable, no multi-tick settle handshake, so a short tap is
-        enough to actually reach the board instead of being undone before the
-        old start sequence could finish.
+        """Per-wheel lifecycle confirmed by hand on the real hardware: a
+        wheel stays fully disabled until a movement command actually arrives
+        (no Enable at robot startup), then goes through Enable -> Speed ->
+        Direction to start moving, one step per tick. When the command ends
+        (vel back to 0) or reverses direction mid-run, it runs a full
+        Speed=0 -> Direction=neutral -> Enable=0 shutdown and returns to
+        idle — the next movement command restarts the whole handshake from
+        scratch rather than just flipping Direction under a held speed.
 
         Direction coil 1: False=forward, True=reverse (matches DirectionControlDevN
         in the original — Contor_System_VIM_reconstructed.py:389-391)."""
+        if time.monotonic() - self._vel_last_rx > self._vel_timeout:
+            vel_cmd = [0.0, 0.0, 0.0, 0.0]
+            if not self._vel_watchdog_tripped:
+                self._vel_watchdog_tripped = True
+                self.get_logger().warn(
+                    f'[WATCHDOG] no /velocity_controller/commands for >{self._vel_timeout}s — '
+                    f'forcing stop (last value was {self._vel})')
+        else:
+            vel_cmd = self._vel
+            self._vel_watchdog_tripped = False
+
         status = []
-        for i, (addr, vel) in enumerate(zip(_BLDC_ADDRS, self._vel)):
+        for i, (addr, vel) in enumerate(zip(_BLDC_ADDRS, vel_cmd)):
+            state = self._bldc_state[i]
             reverse = vel < 0.0
 
-            if self._bldc_dir[i] != reverse:
-                self._write_bit(addr, 1, reverse)
-                self._bldc_dir[i] = reverse
-                status.append(f'{addr}:DIR={"REV" if reverse else "FWD"}')
-                continue   # one tick to settle before sending speed (reference's 50ms gap)
+            if state == 'idle':
+                if vel == 0.0:
+                    status.append(f'{addr}:idle')
+                    continue
+                self._write_bit(addr, 0, True)
+                self._bldc_state[i] = 'enabling'
+                status.append(f'{addr}:ENABLE')
+                continue
 
-            if vel == 0.0:
-                speed = 0
-            else:
-                # below ~200/255 the board just clicks without actually
-                # spinning the wheel (confirmed empirically) — never ask for
-                # less than that once we actually want to move
-                speed = int(min(255.0, max(abs(vel) / self._max_speed * 255, self._min_power)))
-
-            if speed != self._bldc_sent_power[i]:
+            if state == 'enabling':
+                if vel == 0.0:
+                    # velocity dropped before speed step — abort cleanly
+                    self._write_register(addr, 0, 0)
+                    self._write_bit(addr, 0, False)
+                    self._bldc_state[i] = 'idle'
+                    self._bldc_power[i] = 0.0
+                    self._bldc_sent_power[i] = None
+                    status.append(f'{addr}:ABORT→idle')
+                    continue
+                # Jump straight to effective target power rather than starting
+                # at power_step (7) which is below min_power (200) — the board
+                # clicks but never spins until the ramp reaches 200, which takes
+                # 1.35s at the default rate, far too slow for manual control.
+                target = self._bldc_target(vel)
+                self._bldc_power[i] = target
+                speed = int(target)
                 self._write_register(addr, 0, speed)
                 self._bldc_sent_power[i] = speed
-                status.append(f'{addr}:vel={vel:.2f},pwr={speed}')
-            else:
-                status.append(f'{addr}:vel={vel:.2f},pwr={speed}(held)')
+                self._bldc_state[i] = 'speeding'
+                status.append(f'{addr}:SPEED={speed}')
+                continue
+
+            if state == 'speeding':
+                if vel == 0.0:
+                    # velocity dropped before direction step — abort cleanly
+                    self._write_register(addr, 0, 0)
+                    self._write_bit(addr, 0, False)
+                    self._bldc_state[i] = 'idle'
+                    self._bldc_power[i] = 0.0
+                    self._bldc_sent_power[i] = None
+                    status.append(f'{addr}:ABORT→idle')
+                    continue
+                self._write_bit(addr, 1, reverse)
+                self._bldc_dir[i] = reverse
+                self._bldc_state[i] = 'running'
+                status.append(f'{addr}:DIR={"REV" if reverse else "FWD"}')
+                continue
+
+            if state == 'running':
+                if vel == 0.0 or reverse != self._bldc_dir[i]:
+                    self._write_register(addr, 0, 0)
+                    self._bldc_sent_power[i] = 0
+                    self._bldc_state[i] = 'stopping_dir'
+                    status.append(f'{addr}:STOP(speed=0)')
+                    continue
+
+                target = self._bldc_target(vel)
+                cur = self._bldc_power[i]
+                if target > cur:
+                    cur = min(target, cur + self._power_step)
+                else:
+                    cur = max(target, cur - self._power_step)
+                self._bldc_power[i] = cur
+                speed = int(cur)
+
+                if speed != self._bldc_sent_power[i]:
+                    self._write_register(addr, 0, speed)
+                    self._bldc_sent_power[i] = speed
+                    status.append(f'{addr}:vel={vel:.2f},pwr={speed}')
+                else:
+                    status.append(f'{addr}:vel={vel:.2f},pwr={speed}(held)')
+                continue
+
+            if state == 'stopping_dir':
+                self._write_bit(addr, 1, False)
+                self._bldc_dir[i] = False
+                self._bldc_state[i] = 'stopping_enable'
+                status.append(f'{addr}:STOP(dir=neutral)')
+                continue
+
+            if state == 'stopping_enable':
+                self._write_bit(addr, 0, False)
+                self._bldc_state[i] = 'idle'
+                self._bldc_power[i] = 0.0
+                self._bldc_sent_power[i] = None
+                self._bldc_dir[i] = None
+                status.append(f'{addr}:DISABLE')
+                continue
 
         self.get_logger().info(f'[BLDC tick] {" | ".join(status)}', throttle_duration_sec=1.0)
 
     def _send_steering(self):
+        if not self._steer_dirty:
+            return
+        self._steer_dirty = False
+
         steer = self._steer
         if steer > 0.05:
             val = 1
@@ -417,35 +530,59 @@ class RS485Bridge(Node):
             val = 2
         else:
             val = 0
-        if val != self._steer_sent:
-            self._write_register(_RELAY_STEER, 0, val)
-            self._steer_sent = val
+
+        # When VS Navigation is active it sends many small corrections; skip
+        # the Modbus write if the direction bucket (0/1/2) hasn't changed.
+        if self._vs_active and val == self._steer_sent_val:
+            return
+
+        self._write_register(_RELAY_STEER, 0, val)
+        self._steer_sent_val = val
 
     def _send_actuators(self):
-        """Write relay actuator boards (FC06 ch0/ch1) and separator BLDC (FC05+FC06)."""
+        """Write relay actuator boards (FC06 ch0/ch1) and separator BLDC
+        (FC05+FC06) only when their commanded state actually changes — same
+        edge-triggered approach as steering/BLDC, instead of re-asserting an
+        idle "off" command on every tick."""
         for name, (addr, cmds) in _VIM_MAP.items():
             ch0, ch1 = cmds.get(self._vim_cmds[name], (0, 0))
-            if self._vim_sent.get((addr, 0)) != ch0:
+            if (ch0, ch1) != self._vim_sent[name]:
                 self._write_register(addr, 0, ch0)
-                self._vim_sent[(addr, 0)] = ch0
-            if self._vim_sent.get((addr, 1)) != ch1:
                 self._write_register(addr, 1, ch1)
-                self._vim_sent[(addr, 1)] = ch1
+                self._vim_sent[name] = (ch0, ch1)
 
         cmd = self._separator_cmd
         if cmd == 0:
-            self._write_register(_SEPARATOR_ADDR, 0, 0)
+            direction, speed = self._separator_dir_sent, 0
         elif cmd == 1:
-            self._write_bit(_SEPARATOR_ADDR, 1, False)
-            self._write_register(_SEPARATOR_ADDR, 0, 255)
-        elif cmd == 2:
-            self._write_bit(_SEPARATOR_ADDR, 1, True)
-            self._write_register(_SEPARATOR_ADDR, 0, 255)
+            direction, speed = False, 255
+        else:
+            direction, speed = True, 255
+
+        if cmd != 0 and direction != self._separator_dir_sent:
+            self._write_bit(_SEPARATOR_ADDR, 1, direction)
+            self._separator_dir_sent = direction
+        if speed != self._separator_speed_sent:
+            self._write_register(_SEPARATOR_ADDR, 0, speed)
+            self._separator_speed_sent = speed
 
     def _read_hall(self):
-        """Read Hall sensor frequency from each BLDC board (FC04, reg 0)."""
+        """Read Hall sensor frequency from each BLDC board (FC04, reg 0).
+
+        Bypasses the shared circuit breaker so that a failed Hall read
+        does not block control writes (Enable/Speed/Direction) to the same
+        address — those are critical, Hall feedback is advisory only."""
+        if not self._modbus_ok:
+            return
         for i, addr in enumerate(_BLDC_ADDRS):
-            hz = self._read_register(addr, 0)
+            if addr not in self._devs:
+                continue
+            try:
+                with self._modbus_lock:
+                    self._devs[addr].serial.reset_input_buffer()
+                    hz = self._devs[addr].read_register(0, 0, 4, False)
+            except Exception:
+                hz = 0
             sign = 1.0 if self._vel[i] >= 0.0 else -1.0
             self._hall_vel[i] = sign * hz * self._hall_to_rads
 
