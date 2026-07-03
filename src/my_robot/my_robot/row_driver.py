@@ -2,11 +2,12 @@
 """
 Row driver node: drives wheels forward at a fixed speed for autopilot mode.
 Subscribes to /autopilot/enable (Bool) to start/stop.
+Subscribes to /autopilot/speed (Float64, rad/s) to override forward_speed at runtime.
 Also subscribes to /position_controller/commands to detect autopilot activity.
 """
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray, Bool
+from std_msgs.msg import Float64MultiArray, Bool, Float64
 
 
 class RowDriverNode(Node):
@@ -27,6 +28,9 @@ class RowDriverNode(Node):
         self.enable_sub = self.create_subscription(
             Bool, '/autopilot/enable', self.enable_cb, 10)
 
+        self.speed_sub = self.create_subscription(
+            Float64, '/autopilot/speed', self.speed_cb, 10)
+
         self.timer = self.create_timer(
             1.0 / self.publish_rate, self.publish_velocity)
 
@@ -43,6 +47,10 @@ class RowDriverNode(Node):
             cmd = Float64MultiArray()
             cmd.data = [0.0] * 4
             self.velocity_pub.publish(cmd)
+
+    def speed_cb(self, msg: Float64):
+        self.forward_speed = msg.data
+        self.get_logger().info(f'Forward speed set to {self.forward_speed:.3f} rad/s')
 
     def publish_velocity(self):
         if not self.enabled:
