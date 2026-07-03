@@ -127,6 +127,12 @@ class RS485Bridge(Node):
         self._separator_cmd = 0   # 0=stop, 1=forward(up), 2=reverse(down)
         self._motor_enables = [True, True, True, True]
 
+        # edge-triggered write caches — only send Modbus frame when value changes;
+        # prevents VIM (10 writes/tick) and steering (1 write/tick) from saturating
+        # the bus and delaying BLDC speed writes
+        self._vim_sent   = {}   # (addr, reg) -> last written value
+        self._steer_sent = None # last written steering relay value (0/1/2)
+
         # ── Modbus instruments (all share the same virtual port) ──────────────
         self._devs = {}          # addr -> Instrument
         self._modbus_lock = threading.Lock()
@@ -325,7 +331,14 @@ class RS485Bridge(Node):
             return
         if new_vel != self._vel:
             self.get_logger().info(f'[VEL] /velocity_controller/commands: {self._vel} -> {new_vel}')
-        self._vel = new_vel
+            prev = self._vel
+            self._vel = new_vel
+            # bypass the next-tick wait: send speed=0 immediately so the robot
+            # doesn't coast for up to one full tick period after a stop command
+            if all(v == 0.0 for v in new_vel) and any(v != 0.0 for v in prev):
+                self._send_bldc()
+        else:
+            self._vel = new_vel
 
     def _steer_cb(self, msg: Float64MultiArray):
         if msg.data:
@@ -404,14 +417,20 @@ class RS485Bridge(Node):
             val = 2
         else:
             val = 0
-        self._write_register(_RELAY_STEER, 0, val)
+        if val != self._steer_sent:
+            self._write_register(_RELAY_STEER, 0, val)
+            self._steer_sent = val
 
     def _send_actuators(self):
         """Write relay actuator boards (FC06 ch0/ch1) and separator BLDC (FC05+FC06)."""
         for name, (addr, cmds) in _VIM_MAP.items():
             ch0, ch1 = cmds.get(self._vim_cmds[name], (0, 0))
-            self._write_register(addr, 0, ch0)
-            self._write_register(addr, 1, ch1)
+            if self._vim_sent.get((addr, 0)) != ch0:
+                self._write_register(addr, 0, ch0)
+                self._vim_sent[(addr, 0)] = ch0
+            if self._vim_sent.get((addr, 1)) != ch1:
+                self._write_register(addr, 1, ch1)
+                self._vim_sent[(addr, 1)] = ch1
 
         cmd = self._separator_cmd
         if cmd == 0:
