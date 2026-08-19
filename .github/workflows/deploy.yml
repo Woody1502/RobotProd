@@ -1,0 +1,23 @@
+name: Deploy to Robot
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 10
+
+    steps:
+      - name: Pull latest code
+        run: |
+          cd ~/RobotProd
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Restart robot stack
+        run: |
+          cd ~/RobotProd
+          docker compose down robot || true
+          docker compose up -d --build robot
