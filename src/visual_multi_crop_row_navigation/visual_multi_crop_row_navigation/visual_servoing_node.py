@@ -42,7 +42,8 @@ import image_geometry
 import message_filters
 from rclpy.node import Node
 from rclpy.time import Time
-from sensor_msgs.msg import CameraInfo, Image, Joy
+import cv2
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image, Joy
 from std_msgs.msg import Int32MultiArray
 
 import tf2_geometry_msgs.tf2_geometry_msgs
@@ -87,6 +88,13 @@ class VisualServoingNode(Node):
         self.graphic_pub = self.create_publisher(Image, 'vs_nav/graphic', qos_profile=1)
         self.mask_pub = self.create_publisher(Image, 'vs_nav/mask', qos_profile=1)
         self.exg_pub = self.create_publisher(Image, 'vs_nav/ExG', qos_profile=1)
+
+        # Compressed variants for cross-machine streaming over WiFi
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        _be1 = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.graphic_comp_pub = self.create_publisher(CompressedImage, 'vs_nav/graphic/compressed', _be1)
+        self.mask_comp_pub    = self.create_publisher(CompressedImage, 'vs_nav/mask/compressed',    _be1)
+        self.exg_comp_pub     = self.create_publisher(CompressedImage, 'vs_nav/ExG/compressed',     _be1)
 
         self.velocity_pub = self.create_publisher(Twist, 'cmd_vel', qos_profile=1)
         self.position_pub = self.create_publisher(
@@ -315,19 +323,32 @@ class VisualServoingNode(Node):
             #     round(self.velocityMsg.angular.z, 3),
             #     self.imageProcessor.numOfCropRows)
 
+    def _publish_compressed(self, pub, cv_img, stamp):
+        ok, buf = cv2.imencode('.jpg', cv_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        if ok:
+            msg = CompressedImage()
+            msg.header.stamp = stamp
+            msg.format = 'jpeg'
+            msg.data   = buf.tobytes()
+            pub.publish(msg)
+
     def publishImageTopics(self):
+        now = self.get_clock().now().to_msg()
         # Publish the Graphics image
         self.imageProcessor.drawGraphics()
         graphic_img = self.bridge.cv2_to_imgmsg(self.imageProcessor.graphicsImg, encoding='bgr8')
         self.graphic_pub.publish(graphic_img)
+        self._publish_compressed(self.graphic_comp_pub, self.imageProcessor.graphicsImg, now)
         # publish predicted Mask
         mask_msg = CvBridge().cv2_to_imgmsg(self.imageProcessor.mask)
-        mask_msg.header.stamp = self.get_clock().now().to_msg()
+        mask_msg.header.stamp = now
         self.mask_pub.publish(mask_msg)
-        # publish Exg image 
+        self._publish_compressed(self.mask_comp_pub, self.imageProcessor.mask, now)
+        # publish Exg image
         exg_msg = CvBridge().cv2_to_imgmsg(self.imageProcessor.greenIDX)
-        exg_msg.header.stamp = self.get_clock().now().to_msg()
+        exg_msg.header.stamp = now
         self.exg_pub.publish(exg_msg)
+        self._publish_compressed(self.exg_comp_pub, self.imageProcessor.greenIDX, now)
 
     def setRobotVelocities(self, x, y, omega):
         self.velocityMsg = Twist()
