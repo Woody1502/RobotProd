@@ -104,8 +104,13 @@ class JoyBridge(Node):
                         if len(data) < size:
                             break
                         _, value, etype, number = struct.unpack(fmt, data)
+                        is_init = bool(etype & _JS_EVENT_INIT)
                         if (etype & ~_JS_EVENT_INIT) != _JS_EVENT_AXIS:
                             continue
+                        if not is_init:
+                            self.get_logger().info(
+                                f'[JOY] axis={number} val={value}',
+                                throttle_duration_sec=0.5)
                         if number == _JS_RT_AXIS:
                             rt = _trigger(value)
                         elif number == _JS_LT_AXIS:
