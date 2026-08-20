@@ -438,12 +438,27 @@ class RS485Bridge(Node):
 
             if state == 'enabling':
                 if vel == 0.0:
-                    # velocity dropped before speed step — abort cleanly
-                    self._write_register(addr, 0, 0)
                     self._write_bit(addr, 0, False)
                     self._bldc_state[i] = 'idle'
                     self._bldc_power[i] = 0.0
                     self._bldc_sent_power[i] = None
+                    status.append(f'{addr}:ABORT→idle')
+                    continue
+                # Set DIRECTION while speed is still 0 — safe to change direction here.
+                self._write_bit(addr, 1, reverse)
+                self._bldc_dir[i] = reverse
+                self._bldc_state[i] = 'speeding'
+                status.append(f'{addr}:DIR={"REV" if reverse else "FWD"}')
+                continue
+
+            if state == 'speeding':
+                if vel == 0.0:
+                    self._write_bit(addr, 1, False)
+                    self._write_bit(addr, 0, False)
+                    self._bldc_state[i] = 'idle'
+                    self._bldc_power[i] = 0.0
+                    self._bldc_sent_power[i] = None
+                    self._bldc_dir[i] = None
                     status.append(f'{addr}:ABORT→idle')
                     continue
                 # Jump straight to effective target power rather than starting
@@ -455,24 +470,8 @@ class RS485Bridge(Node):
                 speed = int(target)
                 self._write_register(addr, 0, speed)
                 self._bldc_sent_power[i] = speed
-                self._bldc_state[i] = 'speeding'
-                status.append(f'{addr}:SPEED={speed}')
-                continue
-
-            if state == 'speeding':
-                if vel == 0.0:
-                    # velocity dropped before direction step — abort cleanly
-                    self._write_register(addr, 0, 0)
-                    self._write_bit(addr, 0, False)
-                    self._bldc_state[i] = 'idle'
-                    self._bldc_power[i] = 0.0
-                    self._bldc_sent_power[i] = None
-                    status.append(f'{addr}:ABORT→idle')
-                    continue
-                self._write_bit(addr, 1, reverse)
-                self._bldc_dir[i] = reverse
                 self._bldc_state[i] = 'running'
-                status.append(f'{addr}:DIR={"REV" if reverse else "FWD"}')
+                status.append(f'{addr}:SPEED={speed}')
                 continue
 
             if state == 'running':
