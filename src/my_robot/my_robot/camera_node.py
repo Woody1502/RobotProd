@@ -19,7 +19,8 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, CameraInfo
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from cv_bridge import CvBridge
 
 
@@ -53,6 +54,13 @@ class UsbCameraNode(Node):
         self._img_pub   = self.create_publisher(Image,      '/camera/depth/pure_image',  10)
         self._depth_pub = self.create_publisher(Image,      '/camera/depth/image_depth', 10)
         self._info_pub  = self.create_publisher(CameraInfo, '/camera/depth/camera_info', 10)
+
+        # Compressed publisher for cross-machine streaming over WiFi.
+        # Raw BGR8 at 1280x720 = 2.6 MB/frame → DDS fragments into ~42 UDP packets,
+        # any loss drops the whole frame. JPEG ~50-100 KB → single or a few fragments.
+        _be1 = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self._compressed_pub = self.create_publisher(
+            CompressedImage, '/camera/depth/pure_image/compressed', _be1)
 
         self._camera_info = self._make_camera_info()
         self._zero_depth  = np.zeros((self._height, self._width), dtype=np.float32)
@@ -89,6 +97,14 @@ class UsbCameraNode(Node):
         img_msg.header.stamp    = now
         img_msg.header.frame_id = 'camera_link'
         self._img_pub.publish(img_msg)
+
+        ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if ok:
+            comp = CompressedImage()
+            comp.header = img_msg.header
+            comp.format = 'jpeg'
+            comp.data   = buf.tobytes()
+            self._compressed_pub.publish(comp)
 
         depth_msg = self._bridge.cv2_to_imgmsg(self._zero_depth, encoding='32FC1')
         depth_msg.header.stamp    = now
