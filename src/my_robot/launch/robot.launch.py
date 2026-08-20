@@ -111,10 +111,23 @@ def generate_launch_description():
         output='screen',
     )
 
+    joy_bridge = Node(
+        package='my_robot',
+        executable='joy_bridge',
+        parameters=[{
+            'js_device':    '/dev/input/js0',
+            'max_speed':    10.0,
+            'max_steer':    0.4,
+            'publish_rate': 20.0,
+        }],
+        output='screen',
+    )
+
     return LaunchDescription([
         robot_state_publisher,
         rs485_bridge,
         usb_camera,
+        joy_bridge,
         ekf_odom,
         ekf_map,
         TimerAction(period=2.0, actions=[acker_odom]),
