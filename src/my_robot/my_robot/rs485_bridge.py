@@ -402,8 +402,10 @@ class RS485Bridge(Node):
     def _send_bldc(self):
         """Per-wheel lifecycle confirmed by hand on the real hardware: a
         wheel stays fully disabled until a movement command actually arrives
-        (no Enable at robot startup), then goes through Enable -> Speed ->
-        Direction to start moving, one step per tick. When the command ends
+        (no Enable at robot startup), then goes through Enable -> Speed=0 ->
+        Direction -> Speed=target to start moving, one step per tick. Writing
+        Speed=0 before Direction ensures the motor is stopped when direction
+        is set, preventing direction-change-under-load. When the command ends
         (vel back to 0) or reverses direction mid-run, it runs a full
         Speed=0 -> Direction=neutral -> Enable=0 shutdown and returns to
         idle — the next movement command restarts the whole handshake from
@@ -444,7 +446,22 @@ class RS485Bridge(Node):
                     self._bldc_sent_power[i] = None
                     status.append(f'{addr}:ABORT→idle')
                     continue
-                # Set DIRECTION while speed is still 0 — safe to change direction here.
+                # Write SPEED=0 first (hardware requires Speed before Direction).
+                # Motor stays stopped so the Direction write on the next tick is safe.
+                self._write_register(addr, 0, 0)
+                self._bldc_sent_power[i] = 0
+                self._bldc_state[i] = 'directing'
+                status.append(f'{addr}:SPEED=0(pre-dir)')
+                continue
+
+            if state == 'directing':
+                if vel == 0.0:
+                    self._write_bit(addr, 0, False)
+                    self._bldc_state[i] = 'idle'
+                    self._bldc_power[i] = 0.0
+                    self._bldc_sent_power[i] = None
+                    status.append(f'{addr}:ABORT→idle')
+                    continue
                 self._write_bit(addr, 1, reverse)
                 self._bldc_dir[i] = reverse
                 self._bldc_state[i] = 'speeding'
@@ -453,6 +470,7 @@ class RS485Bridge(Node):
 
             if state == 'speeding':
                 if vel == 0.0:
+                    self._write_register(addr, 0, 0)
                     self._write_bit(addr, 1, False)
                     self._write_bit(addr, 0, False)
                     self._bldc_state[i] = 'idle'
