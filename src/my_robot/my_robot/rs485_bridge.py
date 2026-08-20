@@ -531,9 +531,7 @@ class RS485Bridge(Node):
         else:
             val = 0
 
-        # When VS Navigation is active it sends many small corrections; skip
-        # the Modbus write if the direction bucket (0/1/2) hasn't changed.
-        if self._vs_active and val == self._steer_sent_val:
+        if val == self._steer_sent_val:
             return
 
         self._write_register(_RELAY_STEER, 0, val)

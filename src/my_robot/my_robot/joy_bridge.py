@@ -52,15 +52,18 @@ class JoyBridge(Node):
         self._vel_pub   = self.create_publisher(Float64MultiArray, '/velocity_controller/commands', 10)
         self._steer_pub = self.create_publisher(Float64MultiArray, '/position_controller/commands',  10)
 
-        self._speed = 0.0
-        self._steer = 0.0
-        self._lock  = threading.Lock()
+        self._speed     = 0.0
+        self._steer     = 0.0
+        self._connected = False
+        self._lock      = threading.Lock()
 
         self.create_timer(1.0 / rate, self._publish)
         threading.Thread(target=self._js_reader, daemon=True).start()
 
     def _publish(self):
         with self._lock:
+            if not self._connected:
+                return
             speed = self._speed
             steer = self._steer
 
@@ -90,6 +93,8 @@ class JoyBridge(Node):
             try:
                 with open(self._dev, 'rb') as f:
                     self.get_logger().info(f'Gamepad opened: {self._dev}')
+                    with self._lock:
+                        self._connected = True
                     while rclpy.ok():
                         data = f.read(size)
                         if len(data) < size:
@@ -108,8 +113,14 @@ class JoyBridge(Node):
                             self._steer = steer
 
                 with self._lock:
-                    self._speed = 0.0
-                    self._steer = 0.0
+                    self._speed     = 0.0
+                    self._steer     = 0.0
+                    self._connected = False
+                # publish one final stop so rs485_bridge doesn't hold last speed
+                stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
+                self._vel_pub.publish(stop)
+                steer_z = Float64MultiArray(); steer_z.data = [0.0]
+                self._steer_pub.publish(steer_z)
                 self.get_logger().warn('Gamepad disconnected, retry in 3s...')
             except OSError:
                 self.get_logger().warn(f'Gamepad unavailable ({self._dev}), retry in 3s...')
