@@ -156,9 +156,9 @@ class RS485Bridge(Node):
         # threshold>1 just means eating N slow timeouts before backing off,
         # which barely helps) and back off with exponential cooldown, since
         # an address that's dead tends to stay dead.
-        self._FAIL_THRESHOLD     = 1
-        self._FAIL_COOLDOWN      = 5.0
-        self._FAIL_COOLDOWN_MAX  = 60.0
+        self._FAIL_THRESHOLD     = 3    # allow a few transient WiFi spikes before blocking
+        self._FAIL_COOLDOWN      = 2.0  # short fixed cooldown — exponential backoff is too punishing
+        self._FAIL_COOLDOWN_MAX  = 4.0
         self._addr_fail_count  = {}
         self._addr_skip_until  = {}
         self._addr_trip_count  = {}
@@ -214,7 +214,7 @@ class RS485Bridge(Node):
         for addr in all_addrs:
             dev = minimalmodbus.Instrument(port, addr)
             dev.serial.baudrate = baud
-            dev.serial.timeout = 0.1
+            dev.serial.timeout = 0.5  # WiFi TCP via socat has variable latency; 0.1s was too tight
             self._devs[addr] = dev
         self.get_logger().info(
             f'Serial port {port} opened @ {baud} baud — {len(self._devs)} Modbus addresses registered')

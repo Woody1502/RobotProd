@@ -13,7 +13,7 @@ VIM_PORT="${VIM_PORT:-81}"
 rm -f /tmp/ttyVCOM1.lock
 
 echo "Starting socat inside container (target: ${VIM_HOST}:${VIM_PORT})..."
-socat -d -d pty,raw,echo=0,link=/dev/ttyVCOM1,waitlock=/tmp/ttyVCOM1.lock,nonblock=1 tcp:${VIM_HOST}:${VIM_PORT} &
+socat -d -d pty,raw,echo=0,link=/dev/ttyVCOM1,waitlock=/tmp/ttyVCOM1.lock tcp:${VIM_HOST}:${VIM_PORT},nodelay &
 SOCAT_PID=$!
 
 echo "=========================================="
