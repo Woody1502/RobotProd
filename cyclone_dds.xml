@@ -1,0 +1,23 @@
+<CycloneDDS>
+  <Domain>
+    <General>
+      <!-- Без ограничения интерфейса — DDS сам выберет подходящий.
+           Работает и на loopback (emu.sh), и по WiFi (реальный робот). -->
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+    <Discovery>
+      <!-- Без явных Peers — используется multicast в пределах подсети.
+           ROS_DOMAIN_ID=42 обеспечивает изоляцию от других ROS-систем. -->
+      <MaxAutoParticipantIndex>150</MaxAutoParticipantIndex>
+    </Discovery>
+    <Internal>
+      <SocketReceiveBufferSize min="64MB"/>
+      <SocketSendBufferSize min="64MB"/>
+      <MaxQueuedRexmitBytes>64MB</MaxQueuedRexmitBytes>
+      <Watermarks>
+        <WhcHigh>16MB</WhcHigh>
+      </Watermarks>
+      <HeartbeatInterval min="20ms" max="100ms">20ms</HeartbeatInterval>
+    </Internal>
+  </Domain>
+</CycloneDDS>
