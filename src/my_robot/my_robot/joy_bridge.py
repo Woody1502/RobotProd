@@ -23,7 +23,8 @@ import time
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray
+from rclpy.qos import QoSProfile, DurabilityPolicy
+from std_msgs.msg import Bool, Float64MultiArray
 
 _JS_EVENT_AXIS = 0x02
 _JS_EVENT_INIT = 0x80
@@ -51,6 +52,8 @@ class JoyBridge(Node):
 
         self._vel_pub   = self.create_publisher(Float64MultiArray, '/velocity_controller/commands', 10)
         self._steer_pub = self.create_publisher(Float64MultiArray, '/position_controller/commands',  10)
+        _latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._conn_pub  = self.create_publisher(Bool, '/joy_bridge/connected', _latched)
 
         self._speed     = 0.0
         self._steer     = 0.0
@@ -95,6 +98,7 @@ class JoyBridge(Node):
                     self.get_logger().info(f'Gamepad opened: {self._dev}')
                     with self._lock:
                         self._connected = True
+                    self._conn_pub.publish(Bool(data=True))
                     while rclpy.ok():
                         data = f.read(size)
                         if len(data) < size:
@@ -112,6 +116,7 @@ class JoyBridge(Node):
                             self._speed = rt - lt
                             self._steer = steer
 
+                self._conn_pub.publish(Bool(data=False))
                 with self._lock:
                     self._speed     = 0.0
                     self._steer     = 0.0
