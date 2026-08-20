@@ -29,7 +29,7 @@ from std_msgs.msg import Bool, Float64MultiArray
 _JS_EVENT_AXIS = 0x02
 _JS_EVENT_INIT = 0x80
 _JS_RT_AXIS    = 5
-_JS_LT_AXIS    = 2
+_JS_LT_AXIS    = 4
 _JS_LSX_AXIS   = 0
 _JS_TRIGGER_DZ = 500
 _JS_STICK_DZ   = 2000
