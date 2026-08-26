@@ -12,6 +12,12 @@ VIM_PORT="${VIM_PORT:-81}"
 # зависнет на waitlock и /dev/ttyVCOM1 никогда не создастся
 rm -f /tmp/ttyVCOM1.lock
 
+# mDNS — announce fitobot.local on the network
+mkdir -p /run/dbus
+dbus-daemon --system --fork 2>/dev/null || true
+sleep 0.3
+avahi-daemon --no-drop-root --daemonize 2>/dev/null || true
+
 echo "Starting socat inside container (target: ${VIM_HOST}:${VIM_PORT})..."
 socat -d -d pty,raw,echo=0,link=/dev/ttyVCOM1,waitlock=/tmp/ttyVCOM1.lock tcp:${VIM_HOST}:${VIM_PORT},nodelay &
 SOCAT_PID=$!
