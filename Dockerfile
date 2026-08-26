@@ -36,11 +36,7 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip3 install minimalmodbus pynput --break-system-packages
 
-RUN apt-get update && apt-get install -y socat avahi-daemon dbus && rm -rf /var/lib/apt/lists/*
-
-# mDNS: hostname fitobot → fitobot.local
-RUN printf '[server]\nhost-name=fitobot\nuse-ipv4=yes\nuse-ipv6=no\n\n[publish]\npublish-hinfo=no\npublish-workstation=no\n' \
-    > /etc/avahi/avahi-daemon.conf
+RUN apt-get update && apt-get install -y socat && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /ros2_ws
 COPY src/ src/
