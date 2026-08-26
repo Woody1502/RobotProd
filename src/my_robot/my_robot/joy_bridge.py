@@ -118,7 +118,7 @@ class JoyBridge(Node):
                         elif number == _JS_LSX_AXIS:
                             steer = _stick(value)
                         with self._lock:
-                            self._speed = rt - lt
+                            self._speed = lt - rt
                             self._steer = steer
 
                 self._conn_pub.publish(Bool(data=False))
