@@ -28,7 +28,6 @@ services:
       - ./install:/ros2_ws/install
       - ./log:/ros2_ws/log
       - /dev/input:/dev/input  # gamepad (динамически подключается по BT)
-      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket  # avahi mDNS
     command: >
       bash -c "source /opt/ros/jazzy/setup.bash &&
                colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release &&
