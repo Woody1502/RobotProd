@@ -114,15 +114,13 @@ class RS485Bridge(Node):
         self._steer_sent_val = None  # last val (0/1/2) actually written to Modbus
         self._vs_active   = False  # mirrors /mission/vs_active
 
-        # per-wheel BLDC lifecycle: a wheel stays fully disabled until a
-        # movement command actually arrives — no Enable at robot startup.
-        # 'idle' -> (vel != 0) -> 'enabling' -> 'speeding' -> 'running'
-        # 'running' -> (vel == 0, or a direction reversal) -> 'stopping_dir'
-        #           -> 'stopping_enable' -> 'idle'
-        # One state transition per tick (~50ms), matching the proven Enable
-        # -> Speed -> Direction handshake gap; a direction reversal mid-run
-        # is treated as a full stop + fresh restart, not just flipping the
-        # coil under an already-held speed.
+        # per-wheel BLDC lifecycle: Enable is sent once at startup (same as
+        # the separator and the original desktop app). Per-tick work is only
+        # direction and speed — no enable/disable per movement.
+        # 'idle'     -> vel!=0 -> write DIR (if needed) + SPEED -> 'running'
+        # 'running'  -> vel=0  -> write SPEED=0 -> 'idle'
+        # 'running'  -> dir flip -> write SPEED=0 -> 'reversing'
+        # 'reversing'           -> write DIR + SPEED -> 'running'
         self._bldc_state = ['idle', 'idle', 'idle', 'idle']
         self._bldc_dir = [None, None, None, None]
         self._bldc_sent_power = [None, None, None, None]
@@ -168,6 +166,7 @@ class RS485Bridge(Node):
             self._init_modbus(modbus_port, modbus_baud)
             self._modbus_ok = True
             self._enable_separator()
+            self._enable_all_bldc()
             self._probe_devices()
         except Exception as e:
             self.get_logger().error(f'Modbus init failed on {modbus_port}: {e}')
@@ -220,15 +219,18 @@ class RS485Bridge(Node):
             f'Serial port {port} opened @ {baud} baud — {len(self._devs)} Modbus addresses registered')
 
     def _enable_separator(self):
-        """Enable the separator BLDC board once at startup (coil 0 = Enable).
-
-        Unlike the 4 drive wheels, the separator isn't part of the
-        enable-per-drive-command lifecycle the wheels now use — it's a
-        distinct subsystem controlled via /vim/separator, with its own
-        direction+speed handling in _send_actuators, so it keeps the old
-        always-enabled behavior."""
+        """Enable the separator BLDC board once at startup (coil 0 = Enable)."""
         self._write_bit(_SEPARATOR_ADDR, 0, True)
         self.get_logger().info('Enable coil sent to separator (addr 6)')
+
+    def _enable_all_bldc(self):
+        """Enable all 4 drive wheels once at startup.
+
+        Stays enabled for the whole session; only speed and direction
+        change per movement, matching the original desktop app behavior."""
+        for addr in _BLDC_ADDRS:
+            self._write_bit(addr, 0, True)
+        self.get_logger().info('Enable coil sent to all drive wheels (addrs 8-11)')
 
     def _probe_devices(self):
         """Probe each board with FC03 read; log which ones respond."""
@@ -374,8 +376,12 @@ class RS485Bridge(Node):
         d = list(msg.data)
         if len(d) >= 4:
             self._motor_enables = [bool(v) for v in d[:4]]
-            for addr, en in zip(_BLDC_ADDRS, self._motor_enables):
+            for i, (addr, en) in enumerate(zip(_BLDC_ADDRS, self._motor_enables)):
                 self._write_bit(addr, 0, en)
+                if not en:
+                    self._bldc_state[i] = 'idle'
+                    self._bldc_power[i] = 0.0
+                    self._bldc_sent_power[i] = None
 
     # ── Main loop (20 Hz) ─────────────────────────────────────────────────────
 
@@ -400,19 +406,10 @@ class RS485Bridge(Node):
         return min(255.0, max(abs(vel) / self._max_speed * 255, self._min_power))
 
     def _send_bldc(self):
-        """Per-wheel lifecycle confirmed by hand on the real hardware: a
-        wheel stays fully disabled until a movement command actually arrives
-        (no Enable at robot startup), then goes through Enable -> Speed=0 ->
-        Direction -> Speed=target to start moving, one step per tick. Writing
-        Speed=0 before Direction ensures the motor is stopped when direction
-        is set, preventing direction-change-under-load. When the command ends
-        (vel back to 0) or reverses direction mid-run, it runs a full
-        Speed=0 -> Direction=neutral -> Enable=0 shutdown and returns to
-        idle — the next movement command restarts the whole handshake from
-        scratch rather than just flipping Direction under a held speed.
+        """Wheels stay enabled all session (coil 0 set once at startup).
+        Per-tick work: direction + speed only.
 
-        Direction coil 1: False=forward, True=reverse (matches DirectionControlDevN
-        in the original — Contor_System_VIM_reconstructed.py:389-391)."""
+        Direction coil 1: False=forward, True=reverse."""
         if time.monotonic() - self._vel_last_rx > self._vel_timeout:
             vel_cmd = [0.0, 0.0, 0.0, 0.0]
             if not self._vel_watchdog_tripped:
@@ -426,6 +423,10 @@ class RS485Bridge(Node):
 
         status = []
         for i, (addr, vel) in enumerate(zip(_BLDC_ADDRS, vel_cmd)):
+            if not self._motor_enables[i]:
+                status.append(f'{addr}:disabled')
+                continue
+
             state = self._bldc_state[i]
             reverse = vel < 0.0
 
@@ -433,73 +434,36 @@ class RS485Bridge(Node):
                 if vel == 0.0:
                     status.append(f'{addr}:idle')
                     continue
-                self._write_bit(addr, 0, True)
-                self._bldc_state[i] = 'enabling'
-                status.append(f'{addr}:ENABLE')
-                continue
-
-            if state == 'enabling':
-                if vel == 0.0:
-                    self._write_bit(addr, 0, False)
-                    self._bldc_state[i] = 'idle'
-                    self._bldc_power[i] = 0.0
-                    self._bldc_sent_power[i] = None
-                    status.append(f'{addr}:ABORT→idle')
-                    continue
-                # Write SPEED=0 first (hardware requires Speed before Direction).
-                # Motor stays stopped so the Direction write on the next tick is safe.
-                self._write_register(addr, 0, 0)
-                self._bldc_sent_power[i] = 0
-                self._bldc_state[i] = 'directing'
-                status.append(f'{addr}:SPEED=0(pre-dir)')
-                continue
-
-            if state == 'directing':
-                if vel == 0.0:
-                    self._write_bit(addr, 0, False)
-                    self._bldc_state[i] = 'idle'
-                    self._bldc_power[i] = 0.0
-                    self._bldc_sent_power[i] = None
-                    status.append(f'{addr}:ABORT→idle')
-                    continue
-                self._write_bit(addr, 1, reverse)
-                self._bldc_dir[i] = reverse
-                self._bldc_state[i] = 'speeding'
-                status.append(f'{addr}:DIR={"REV" if reverse else "FWD"}')
-                continue
-
-            if state == 'speeding':
-                if vel == 0.0:
-                    self._write_register(addr, 0, 0)
-                    self._write_bit(addr, 1, False)
-                    self._write_bit(addr, 0, False)
-                    self._bldc_state[i] = 'idle'
-                    self._bldc_power[i] = 0.0
-                    self._bldc_sent_power[i] = None
-                    self._bldc_dir[i] = None
-                    status.append(f'{addr}:ABORT→idle')
-                    continue
-                # Jump straight to effective target power rather than starting
-                # at power_step (7) which is below min_power (200) — the board
-                # clicks but never spins until the ramp reaches 200, which takes
-                # 1.35s at the default rate, far too slow for manual control.
+                # First move or direction change: write direction first, then speed
+                if self._bldc_dir[i] is None or reverse != self._bldc_dir[i]:
+                    self._write_bit(addr, 1, reverse)
+                    self._bldc_dir[i] = reverse
                 target = self._bldc_target(vel)
-                self._bldc_power[i] = target
                 speed = int(target)
                 self._write_register(addr, 0, speed)
                 self._bldc_sent_power[i] = speed
+                self._bldc_power[i] = float(speed)
                 self._bldc_state[i] = 'running'
-                status.append(f'{addr}:SPEED={speed}')
+                status.append(f'{addr}:START({"REV" if reverse else "FWD"},pwr={speed})')
                 continue
 
             if state == 'running':
-                if vel == 0.0 or reverse != self._bldc_dir[i]:
+                if vel == 0.0:
                     self._write_register(addr, 0, 0)
                     self._bldc_sent_power[i] = 0
-                    self._bldc_state[i] = 'stopping_dir'
-                    status.append(f'{addr}:STOP(speed=0)')
+                    self._bldc_power[i] = 0.0
+                    self._bldc_state[i] = 'idle'
+                    status.append(f'{addr}:STOP')
                     continue
-
+                if reverse != self._bldc_dir[i]:
+                    # Stop first; next tick will set new direction and speed
+                    self._write_register(addr, 0, 0)
+                    self._bldc_sent_power[i] = 0
+                    self._bldc_power[i] = 0.0
+                    self._bldc_state[i] = 'reversing'
+                    status.append(f'{addr}:STOP(dir-change)')
+                    continue
+                # Normal running: ramp toward target
                 target = self._bldc_target(vel)
                 cur = self._bldc_power[i]
                 if target > cur:
@@ -508,7 +472,6 @@ class RS485Bridge(Node):
                     cur = max(target, cur - self._power_step)
                 self._bldc_power[i] = cur
                 speed = int(cur)
-
                 if speed != self._bldc_sent_power[i]:
                     self._write_register(addr, 0, speed)
                     self._bldc_sent_power[i] = speed
@@ -517,20 +480,21 @@ class RS485Bridge(Node):
                     status.append(f'{addr}:vel={vel:.2f},pwr={speed}(held)')
                 continue
 
-            if state == 'stopping_dir':
-                self._write_bit(addr, 1, False)
-                self._bldc_dir[i] = False
-                self._bldc_state[i] = 'stopping_enable'
-                status.append(f'{addr}:STOP(dir=neutral)')
-                continue
-
-            if state == 'stopping_enable':
-                self._write_bit(addr, 0, False)
-                self._bldc_state[i] = 'idle'
-                self._bldc_power[i] = 0.0
-                self._bldc_sent_power[i] = None
-                self._bldc_dir[i] = None
-                status.append(f'{addr}:DISABLE')
+            if state == 'reversing':
+                # Motor is stopped; write new direction then restart
+                self._write_bit(addr, 1, reverse)
+                self._bldc_dir[i] = reverse
+                if vel != 0.0:
+                    target = self._bldc_target(vel)
+                    speed = int(target)
+                    self._write_register(addr, 0, speed)
+                    self._bldc_sent_power[i] = speed
+                    self._bldc_power[i] = float(speed)
+                    self._bldc_state[i] = 'running'
+                    status.append(f'{addr}:REVERSE→RUN(pwr={speed})')
+                else:
+                    self._bldc_state[i] = 'idle'
+                    status.append(f'{addr}:REVERSE→idle')
                 continue
 
         self.get_logger().info(f'[BLDC tick] {" | ".join(status)}', throttle_duration_sec=1.0)
