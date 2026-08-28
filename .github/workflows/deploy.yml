@@ -20,4 +20,11 @@ jobs:
         run: |
           cd ~/RobotProd
           docker compose down robot || true
-          docker compose up -d --build robot
+          # Пересобираем образ только если изменился Dockerfile или docker-compose.yml.
+          # Исходный код монтируется как volume и собирается colcon при старте контейнера,
+          # поэтому перестраивать образ при каждом пуше не нужно (и не работает без интернета).
+          if git diff HEAD~1 --name-only 2>/dev/null | grep -qE '^(Dockerfile|docker-compose\.yml)'; then
+            docker compose up -d --build robot
+          else
+            docker compose up -d robot
+          fi
