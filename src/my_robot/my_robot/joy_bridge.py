@@ -24,16 +24,32 @@ import time
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy
-from std_msgs.msg import Bool, Float64MultiArray
+from std_msgs.msg import Bool, Float64MultiArray, Int8
 
 _JS_EVENT_AXIS = 0x02
 _JS_EVENT_INIT = 0x80
 _JS_RT_AXIS    = 5
 _JS_LT_AXIS    = 4
 _JS_LSX_AXIS   = 0
+_JS_DPAD_X     = 6   # left=-32767, right=+32767
+_JS_DPAD_Y     = 7   # up=-32767,   down=+32767
 _JS_TRIGGER_DZ = 500
 _JS_STICK_DZ   = 2000
+_JS_DPAD_DZ    = 16000
 _JS_MAX        = 32767.0
+
+
+def _dpad_to_manip_cmd(dx: int, dy: int) -> int:
+    """Map D-pad axis values to /vim/manipulator command."""
+    if dy < -_JS_DPAD_DZ:
+        return 1  # рука вверх
+    if dy > _JS_DPAD_DZ:
+        return 2  # рука вниз
+    if dx < -_JS_DPAD_DZ:
+        return 3  # захват влево
+    if dx > _JS_DPAD_DZ:
+        return 4  # захват вправо
+    return 0      # стоп
 
 
 class JoyBridge(Node):
@@ -52,6 +68,7 @@ class JoyBridge(Node):
 
         self._vel_pub   = self.create_publisher(Float64MultiArray, '/velocity_controller/commands', 10)
         self._steer_pub = self.create_publisher(Float64MultiArray, '/position_controller/commands',  10)
+        self._manip_pub = self.create_publisher(Int8,              '/vim/manipulator',               10)
         _latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._conn_pub  = self.create_publisher(Bool, '/joy_bridge/connected', _latched)
 
@@ -59,6 +76,8 @@ class JoyBridge(Node):
         self._steer     = 0.0
         self._connected = False
         self._lock      = threading.Lock()
+        self._dpad_x    = 0
+        self._dpad_y    = 0
 
         self.create_timer(1.0 / rate, self._publish)
         threading.Thread(target=self._js_reader, daemon=True).start()
@@ -117,6 +136,15 @@ class JoyBridge(Node):
                             lt = _trigger(value)
                         elif number == _JS_LSX_AXIS:
                             steer = _stick(value)
+                        elif number in (_JS_DPAD_X, _JS_DPAD_Y):
+                            with self._lock:
+                                if number == _JS_DPAD_X:
+                                    self._dpad_x = value
+                                else:
+                                    self._dpad_y = value
+                                cmd = _dpad_to_manip_cmd(self._dpad_x, self._dpad_y)
+                            self._manip_pub.publish(Int8(data=cmd))
+                            continue
                         with self._lock:
                             self._speed = lt - rt
                             self._steer = steer
@@ -126,11 +154,14 @@ class JoyBridge(Node):
                     self._speed     = 0.0
                     self._steer     = 0.0
                     self._connected = False
+                    self._dpad_x    = 0
+                    self._dpad_y    = 0
                 # publish one final stop so rs485_bridge doesn't hold last speed
                 stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
                 self._vel_pub.publish(stop)
                 steer_z = Float64MultiArray(); steer_z.data = [0.0]
                 self._steer_pub.publish(steer_z)
+                self._manip_pub.publish(Int8(data=0))
                 self.get_logger().warn('Gamepad disconnected, retry in 3s...')
             except OSError:
                 self.get_logger().warn(f'Gamepad unavailable ({self._dev}), retry in 3s...')
