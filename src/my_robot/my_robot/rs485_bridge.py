@@ -325,6 +325,27 @@ class RS485Bridge(Node):
                                        throttle_duration_sec=2.0)
                 self._breaker_on_failure(addr)
 
+    def _write_registers(self, addr: int, values: list):
+        """Write Multiple Registers (FC16) through minimalmodbus — matches write_long from original GUI."""
+        if not self._modbus_ok or addr not in self._devs:
+            self.get_logger().warn(
+                f'[TX SKIP] addr={addr} FC16 vals={values} — modbus_ok={self._modbus_ok}, known_addr={addr in self._devs}',
+                throttle_duration_sec=2.0)
+            return
+        if self._breaker_blocked(addr):
+            return
+        with self._modbus_lock:
+            try:
+                self._devs[addr].serial.reset_input_buffer()
+                self._devs[addr].write_registers(0, values)
+                self.get_logger().info(f'[TX OK] addr={addr} FC16 vals={values}',
+                                       throttle_duration_sec=0.5)
+                self._breaker_on_success(addr)
+            except Exception as e:
+                self.get_logger().warn(f'[TX FAIL] addr={addr} FC16 vals={values}: {type(e).__name__}: {e}',
+                                       throttle_duration_sec=2.0)
+                self._breaker_on_failure(addr)
+
     def _read_register(self, addr: int, reg: int) -> int:
         """Read Input Register (FC04) through minimalmodbus and return raw 16-bit value."""
         if not self._modbus_ok or addr not in self._devs:
@@ -526,8 +547,13 @@ class RS485Bridge(Node):
         for name, (addr, cmds) in _VIM_MAP.items():
             ch0, ch1 = cmds.get(self._vim_cmds[name], (0, 0))
             if (ch0, ch1) != self._vim_sent[name]:
-                self._write_register(addr, 0, ch0)
-                self._write_register(addr, 1, ch1)
+                if name == 'manipulator':
+                    # manipulator uses independent channels — original GUI uses FC06
+                    self._write_register(addr, 0, ch0)
+                    self._write_register(addr, 1, ch1)
+                else:
+                    # two-channel relay boards — original GUI uses write_long (FC16)
+                    self._write_registers(addr, [ch0, ch1])
                 self._vim_sent[name] = (ch0, ch1)
 
         cmd = self._separator_cmd
@@ -608,8 +634,11 @@ class RS485Bridge(Node):
             self._write_bit(addr, 1, False)
             self._write_bit(addr, 0, False)
         for name, (addr, _) in _VIM_MAP.items():
-            self._write_register(addr, 0, 0)
-            self._write_register(addr, 1, 0)
+            if name == 'manipulator':
+                self._write_register(addr, 0, 0)
+                self._write_register(addr, 1, 0)
+            else:
+                self._write_registers(addr, [0, 0])
         self._write_register(_RELAY_STEER, 0, 0)
         super().destroy_node()
 
