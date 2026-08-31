@@ -5,16 +5,18 @@ and publishes robot control commands to ROS2 topics.
 
 Xbox Wireless Controller mapping:
   Axis 0  — Left Stick X   → steering
+  Axis 1  — Left Stick Y   → flaps up/down
+  Axis 2  — Right Stick X  → bunker up/down
+  Axis 3  — Right Stick Y  → frame up/down
   Axis 4  — LT             → drive backward
   Axis 5  — RT             → drive forward
-  Axis 6  — D-pad X        → gripper ←/→ (manipulator) | [X held] bunker ↑/↓
-  Axis 7  — D-pad Y        → arm ↑/↓ (manipulator)     | [X held] frame ↑/↓
-  Btn A   — hold           → separator forward (up)
-  Btn B   — press          → separator stop
-  Btn X   — hold           → secondary mode modifier
-  Btn Y   — hold           → separator reverse (down)
-  Btn LB  — hold           → bucket up   | [X held] flaps up
-  Btn RB  — hold           → bucket down | [X held] flaps down
+  Axis 6  — D-pad X        → gripper left/right  (manipulator ch1)
+  Axis 7  — D-pad Y        → arm up/down          (manipulator ch0)
+  Btn 0   — A   (hold)     → separator forward
+  Btn 1   — B   (press)    → separator stop
+  Btn 3   — Y   (hold)     → separator reverse
+  Btn 4   — LB  (hold)     → bucket up
+  Btn 5   — RB  (hold)     → bucket down
 """
 
 import struct
@@ -30,22 +32,28 @@ _JS_EVENT_AXIS   = 0x02
 _JS_EVENT_BUTTON = 0x01
 _JS_EVENT_INIT   = 0x80
 
+# Axes
 _JS_RT_AXIS  = 5
 _JS_LT_AXIS  = 4
-_JS_LSX_AXIS = 0
+_JS_LSX_AXIS = 0    # left stick X  → steer
+_JS_LSY_AXIS = 1    # left stick Y  → flaps
+_JS_RSX_AXIS = 2    # right stick X → bunker
+_JS_RSY_AXIS = 3    # right stick Y → frame
 _JS_DPAD_X   = 6   # left=-32767, right=+32767
 _JS_DPAD_Y   = 7   # up=-32767,   down=+32767
 
+# Buttons
 _JS_BTN_A  = 0    # separator forward (hold)
 _JS_BTN_B  = 1    # separator stop
-_JS_BTN_X  = 2    # secondary mode modifier (hold)
 _JS_BTN_Y  = 3    # separator reverse (hold)
-_JS_BTN_LB = 4    # bucket up  / [X] flaps up
-_JS_BTN_RB = 5    # bucket down / [X] flaps down
+_JS_BTN_LB = 4    # bucket up (hold)
+_JS_BTN_RB = 5    # bucket down (hold)
 
 _JS_TRIGGER_DZ = 500
 _JS_STICK_DZ   = 2000
 _JS_DPAD_DZ    = 16000
+_JS_RSTICK_DZ  = 18000   # higher deadzone for relay axes (frame/bunker)
+_JS_LSTICK_Y_DZ = 18000  # deadzone for flaps axis
 _JS_MAX        = 32767.0
 
 
@@ -57,11 +65,11 @@ def _dpad_to_manip_cmd(dx: int, dy: int) -> int:
     return 0
 
 
-def _dpad_to_frame_bunker(dx: int, dy: int):
-    """Secondary mode: D-pad Y → frame, D-pad X → bunker. Returns (frame_cmd, bunker_cmd)."""
-    frame  = 1 if dy < -_JS_DPAD_DZ else (2 if dy > _JS_DPAD_DZ else 0)
-    bunker = 1 if dx < -_JS_DPAD_DZ else (2 if dx > _JS_DPAD_DZ else 0)
-    return frame, bunker
+def _axis_to_relay_cmd(value: int, dz: int) -> int:
+    """Convert analog stick axis to relay board command (0=stop, 1=forward, 2=reverse)."""
+    if value < -dz: return 1    # stick up/left → forward
+    if value > dz:  return 2    # stick down/right → reverse
+    return 0
 
 
 class JoyBridge(Node):
@@ -97,13 +105,8 @@ class JoyBridge(Node):
         self._speed     = 0.0
         self._steer     = 0.0
         self._connected = False
-
-        # Input state (protected by _lock)
-        self._dpad_x = 0
-        self._dpad_y = 0
-        self._btn_x  = False   # modifier
-        self._btn_lb = False
-        self._btn_rb = False
+        self._dpad_x    = 0
+        self._dpad_y    = 0
 
         self.create_timer(1.0 / rate, self._publish)
         threading.Thread(target=self._js_reader, daemon=True).start()
@@ -124,81 +127,6 @@ class JoyBridge(Node):
         steer_msg = Float64MultiArray()
         steer_msg.data = [steer]
         self._steer_pub.publish(steer_msg)
-
-    # ── event handlers ───────────────────────────────────────────────────────
-
-    def _on_dpad(self, axis: int, value: int):
-        with self._lock:
-            if axis == _JS_DPAD_X:
-                self._dpad_x = value
-            else:
-                self._dpad_y = value
-            dx, dy  = self._dpad_x, self._dpad_y
-            x_held  = self._btn_x
-
-        if x_held:
-            frame, bunker = _dpad_to_frame_bunker(dx, dy)
-            self._frame_pub.publish(Int8(data=frame))
-            self._bunker_pub.publish(Int8(data=bunker))
-        else:
-            self._manip_pub.publish(Int8(data=_dpad_to_manip_cmd(dx, dy)))
-
-    def _on_button(self, btn: int, pressed: bool):
-        with self._lock:
-            if btn == _JS_BTN_X:
-                self._btn_x = pressed
-            elif btn == _JS_BTN_LB:
-                self._btn_lb = pressed
-            elif btn == _JS_BTN_RB:
-                self._btn_rb = pressed
-            dx, dy = self._dpad_x, self._dpad_y
-            x_held = self._btn_x
-            lb     = self._btn_lb
-            rb     = self._btn_rb
-
-        if btn == _JS_BTN_X:
-            if pressed:
-                # Primary → Secondary: stop manipulator/bucket, start frame/bunker/flaps
-                self._manip_pub.publish(Int8(data=0))
-                self._bucket_pub.publish(Int8(data=0))
-                frame, bunker = _dpad_to_frame_bunker(dx, dy)
-                self._frame_pub.publish(Int8(data=frame))
-                self._bunker_pub.publish(Int8(data=bunker))
-                if lb:
-                    self._flaps_pub.publish(Int8(data=1))
-                elif rb:
-                    self._flaps_pub.publish(Int8(data=2))
-            else:
-                # Secondary → Primary: stop frame/bunker/flaps, start manipulator/bucket
-                self._frame_pub.publish(Int8(data=0))
-                self._bunker_pub.publish(Int8(data=0))
-                self._flaps_pub.publish(Int8(data=0))
-                self._manip_pub.publish(Int8(data=_dpad_to_manip_cmd(dx, dy)))
-                if lb:
-                    self._bucket_pub.publish(Int8(data=1))
-                elif rb:
-                    self._bucket_pub.publish(Int8(data=2))
-
-        elif btn == _JS_BTN_LB:
-            if x_held:
-                self._flaps_pub.publish(Int8(data=1 if pressed else 0))
-            else:
-                self._bucket_pub.publish(Int8(data=1 if pressed else 0))
-
-        elif btn == _JS_BTN_RB:
-            if x_held:
-                self._flaps_pub.publish(Int8(data=2 if pressed else 0))
-            else:
-                self._bucket_pub.publish(Int8(data=2 if pressed else 0))
-
-        elif btn == _JS_BTN_A:
-            self._sep_pub.publish(Int8(data=1 if pressed else 0))   # forward
-
-        elif btn == _JS_BTN_Y:
-            self._sep_pub.publish(Int8(data=2 if pressed else 0))   # reverse
-
-        elif btn == _JS_BTN_B and pressed:
-            self._sep_pub.publish(Int8(data=0))                     # stop
 
     def _stop_all_attachments(self):
         for pub in (self._manip_pub, self._bucket_pub, self._frame_pub,
@@ -241,32 +169,64 @@ class JoyBridge(Node):
                                 throttle_duration_sec=0.5)
 
                         if etype_raw == _JS_EVENT_AXIS:
+                            handled = True
                             if number == _JS_RT_AXIS:
                                 rt = _trigger(value)
                             elif number == _JS_LT_AXIS:
                                 lt = _trigger(value)
                             elif number == _JS_LSX_AXIS:
                                 steer = _stick(value)
-                            elif number in (_JS_DPAD_X, _JS_DPAD_Y):
-                                self._on_dpad(number, value)
+                            elif number == _JS_DPAD_X:
+                                with self._lock:
+                                    self._dpad_x = value
+                                    dx, dy = self._dpad_x, self._dpad_y
+                                self._manip_pub.publish(Int8(data=_dpad_to_manip_cmd(dx, dy)))
                                 continue
-                            with self._lock:
-                                self._speed = lt - rt
-                                self._steer = steer
+                            elif number == _JS_DPAD_Y:
+                                with self._lock:
+                                    self._dpad_y = value
+                                    dx, dy = self._dpad_x, self._dpad_y
+                                self._manip_pub.publish(Int8(data=_dpad_to_manip_cmd(dx, dy)))
+                                continue
+                            elif number == _JS_RSY_AXIS:
+                                self._frame_pub.publish(Int8(
+                                    data=_axis_to_relay_cmd(value, _JS_RSTICK_DZ)))
+                                continue
+                            elif number == _JS_RSX_AXIS:
+                                self._bunker_pub.publish(Int8(
+                                    data=_axis_to_relay_cmd(value, _JS_RSTICK_DZ)))
+                                continue
+                            elif number == _JS_LSY_AXIS:
+                                self._flaps_pub.publish(Int8(
+                                    data=_axis_to_relay_cmd(value, _JS_LSTICK_Y_DZ)))
+                                continue
+                            else:
+                                handled = False
+
+                            if handled:
+                                with self._lock:
+                                    self._speed = lt - rt
+                                    self._steer = steer
 
                         elif etype_raw == _JS_EVENT_BUTTON and not is_init:
-                            self._on_button(number, bool(value))
+                            if number == _JS_BTN_A:
+                                self._sep_pub.publish(Int8(data=1 if value else 0))
+                            elif number == _JS_BTN_Y:
+                                self._sep_pub.publish(Int8(data=2 if value else 0))
+                            elif number == _JS_BTN_B and value:
+                                self._sep_pub.publish(Int8(data=0))
+                            elif number == _JS_BTN_LB:
+                                self._bucket_pub.publish(Int8(data=1 if value else 0))
+                            elif number == _JS_BTN_RB:
+                                self._bucket_pub.publish(Int8(data=2 if value else 0))
 
                 self._conn_pub.publish(Bool(data=False))
                 with self._lock:
                     self._speed  = 0.0
                     self._steer  = 0.0
-                    self._connected = False
                     self._dpad_x = 0
                     self._dpad_y = 0
-                    self._btn_x  = False
-                    self._btn_lb = False
-                    self._btn_rb = False
+                    self._connected = False
                 stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
                 self._vel_pub.publish(stop)
                 steer_z = Float64MultiArray(); steer_z.data = [0.0]
