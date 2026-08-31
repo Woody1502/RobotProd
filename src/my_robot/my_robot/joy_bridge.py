@@ -227,6 +227,11 @@ class JoyBridge(Node):
                             elif number == _JS_BTN_RB:
                                 self._bucket_pub.publish(Int8(data=2 if value else 0))
 
+            except OSError:
+                self.get_logger().warn(f'Gamepad unavailable ({self._dev}), retry in 3s...')
+            finally:
+                # always stop everything on disconnect — runs for both clean EOF
+                # and OSError (BT dropout), so no attachment stays energised
                 self._conn_pub.publish(Bool(data=False))
                 with self._lock:
                     self._speed     = 0.0
@@ -241,9 +246,6 @@ class JoyBridge(Node):
                 self._steer_pub.publish(steer_z)
                 self._stop_all_attachments()
                 self.get_logger().warn('Gamepad disconnected, retry in 3s...')
-
-            except OSError:
-                self.get_logger().warn(f'Gamepad unavailable ({self._dev}), retry in 3s...')
             time.sleep(3.0)
 
 
