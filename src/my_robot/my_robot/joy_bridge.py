@@ -12,10 +12,10 @@ Xbox Wireless Controller mapping:
   Axis 5  — RT             → drive forward
   Axis 6  — D-pad X        → gripper left/right  (manipulator ch1)
   Axis 7  — D-pad Y        → arm up/down          (manipulator ch0)
-  Btn 0   — A   (toggle)   → separator forward / stop
+  Btn 0   — A   (hold)     → bucket open
   Btn 1   — B   (hold)     → bucket close
   Btn 3   — Y   (toggle)   → separator reverse / stop
-  Btn 4   — LB  (hold)     → bucket open
+  Btn 4   — LB             → does not fire reliably on this controller
   Btn 5   — RB             → does not fire on this controller
 """
 
@@ -43,11 +43,11 @@ _JS_DPAD_X   = 6   # left=-32767, right=+32767
 _JS_DPAD_Y   = 7   # up=-32767,   down=+32767
 
 # Buttons
-_JS_BTN_A  = 0    # separator forward (toggle)
+_JS_BTN_A  = 0    # bucket open (hold)
 _JS_BTN_B  = 1    # bucket close (hold)
 _JS_BTN_Y  = 3    # separator reverse (toggle)
-_JS_BTN_LB = 4    # bucket open (hold)
-_JS_BTN_RB = 5    # bucket close alt — does not fire on this controller
+_JS_BTN_LB = 4    # does not fire reliably on this controller
+_JS_BTN_RB = 5    # does not fire on this controller
 
 _JS_TRIGGER_DZ = 500
 _JS_STICK_DZ   = 2000
@@ -211,18 +211,14 @@ class JoyBridge(Node):
                                     self._steer = steer
 
                         elif etype_raw == _JS_EVENT_BUTTON and not is_init:
-                            if number == _JS_BTN_A and value:
-                                # toggle forward: stopped/reverse → forward; forward → stop
-                                self._sep_state = 1 if self._sep_state != 1 else 0
-                                self._sep_pub.publish(Int8(data=self._sep_state))
+                            if number == _JS_BTN_A:
+                                self._bucket_pub.publish(Int8(data=1 if value else 0))
+                            elif number == _JS_BTN_B:
+                                self._bucket_pub.publish(Int8(data=2 if value else 0))
                             elif number == _JS_BTN_Y and value:
                                 # toggle reverse: stopped/forward → reverse; reverse → stop
                                 self._sep_state = 2 if self._sep_state != 2 else 0
                                 self._sep_pub.publish(Int8(data=self._sep_state))
-                            elif number == _JS_BTN_B:
-                                self._bucket_pub.publish(Int8(data=2 if value else 0))
-                            elif number == _JS_BTN_LB:
-                                self._bucket_pub.publish(Int8(data=1 if value else 0))
 
             except OSError:
                 self.get_logger().warn(f'Gamepad unavailable ({self._dev}), retry in 3s...')
