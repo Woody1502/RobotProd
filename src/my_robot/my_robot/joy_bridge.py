@@ -7,14 +7,14 @@ Xbox Wireless Controller mapping:
   Axis 0  — Left Stick X   → steering
   Axis 1  — Left Stick Y   → flaps up/down
   Axis 2  — Right Stick X  → bunker up/down
-  Axis 3  — Right Stick Y  → frame up/down
+  Axis 3  — Right Stick Y  → frame up/down  (inverted: up=down, down=up)
   Axis 4  — LT             → drive backward
   Axis 5  — RT             → drive forward
   Axis 6  — D-pad X        → gripper left/right  (manipulator ch1)
   Axis 7  — D-pad Y        → arm up/down          (manipulator ch0)
-  Btn 0   — A   (hold)     → separator forward
+  Btn 0   — A   (toggle)   → separator forward / stop
   Btn 1   — B   (press)    → separator stop
-  Btn 3   — Y   (hold)     → separator reverse
+  Btn 3   — Y   (toggle)   → separator reverse / stop
   Btn 4   — LB  (hold)     → bucket up
   Btn 5   — RB  (hold)     → bucket down
 """
@@ -107,6 +107,7 @@ class JoyBridge(Node):
         self._connected = False
         self._dpad_x    = 0
         self._dpad_y    = 0
+        self._sep_state = 0   # 0=stopped, 1=forward, 2=reverse
 
         self.create_timer(1.0 / rate, self._publish)
         threading.Thread(target=self._js_reader, daemon=True).start()
@@ -189,8 +190,9 @@ class JoyBridge(Node):
                                 self._manip_pub.publish(Int8(data=_dpad_to_manip_cmd(dx, dy)))
                                 continue
                             elif number == _JS_RSY_AXIS:
+                                # invert: stick up (negative) → frame down (cmd=2)
                                 self._frame_pub.publish(Int8(
-                                    data=_axis_to_relay_cmd(value, _JS_RSTICK_DZ)))
+                                    data=_axis_to_relay_cmd(-value, _JS_RSTICK_DZ)))
                                 continue
                             elif number == _JS_RSX_AXIS:
                                 self._bunker_pub.publish(Int8(
@@ -209,11 +211,16 @@ class JoyBridge(Node):
                                     self._steer = steer
 
                         elif etype_raw == _JS_EVENT_BUTTON and not is_init:
-                            if number == _JS_BTN_A:
-                                self._sep_pub.publish(Int8(data=1 if value else 0))
-                            elif number == _JS_BTN_Y:
-                                self._sep_pub.publish(Int8(data=2 if value else 0))
+                            if number == _JS_BTN_A and value:
+                                # toggle forward: stopped/reverse → forward; forward → stop
+                                self._sep_state = 1 if self._sep_state != 1 else 0
+                                self._sep_pub.publish(Int8(data=self._sep_state))
+                            elif number == _JS_BTN_Y and value:
+                                # toggle reverse: stopped/forward → reverse; reverse → stop
+                                self._sep_state = 2 if self._sep_state != 2 else 0
+                                self._sep_pub.publish(Int8(data=self._sep_state))
                             elif number == _JS_BTN_B and value:
+                                self._sep_state = 0
                                 self._sep_pub.publish(Int8(data=0))
                             elif number == _JS_BTN_LB:
                                 self._bucket_pub.publish(Int8(data=1 if value else 0))
@@ -222,11 +229,12 @@ class JoyBridge(Node):
 
                 self._conn_pub.publish(Bool(data=False))
                 with self._lock:
-                    self._speed  = 0.0
-                    self._steer  = 0.0
-                    self._dpad_x = 0
-                    self._dpad_y = 0
+                    self._speed     = 0.0
+                    self._steer     = 0.0
+                    self._dpad_x    = 0
+                    self._dpad_y    = 0
                     self._connected = False
+                self._sep_state = 0
                 stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
                 self._vel_pub.publish(stop)
                 steer_z = Float64MultiArray(); steer_z.data = [0.0]
