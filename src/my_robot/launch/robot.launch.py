@@ -123,11 +123,24 @@ def generate_launch_description():
         output='screen',
     )
 
+    foxglove_bridge = Node(
+        package='foxglove_bridge',
+        executable='foxglove_bridge',
+        parameters=[{
+            'port':               8765,
+            'address':            '0.0.0.0',
+            'tls':                False,
+            'send_buffer_limit':  10000000,  # 10 MB — запас для видеопотока
+        }],
+        output='screen',
+    )
+
     return LaunchDescription([
         robot_state_publisher,
         rs485_bridge,
         usb_camera,
         joy_bridge,
+        foxglove_bridge,
         ekf_odom,
         ekf_map,
         TimerAction(period=2.0, actions=[acker_odom]),

@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-xacro \
     # DDS
     ros-jazzy-rmw-cyclonedds-cpp \
+    # Web visualisation
+    ros-jazzy-foxglove-bridge \
     # Camera / vision
     ros-jazzy-image-transport \
     ros-jazzy-cv-bridge \
