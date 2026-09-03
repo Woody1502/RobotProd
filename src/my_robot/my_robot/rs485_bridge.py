@@ -88,8 +88,8 @@ class RS485Bridge(Node):
         self.declare_parameter('hall_to_rads',  1.0)
         self.declare_parameter('mag_port',      '/dev/ttyUSB1')
         self.declare_parameter('mag_baudrate',  9600)
-        self.declare_parameter('bldc_min_power', 200.0)  # 0-255 floor once moving — cpptest found ~100 just clicks, 200+ actually spins the wheel
-        self.declare_parameter('bldc_ramp_rate', 150.0)  # power units/sec — soft-start so autopilot doesn't lurch straight to bldc_min_power
+        self.declare_parameter('bldc_min_power', 200.0)  # 0-255 minimum that actually spins the wheel (~100 just clicks)
+        self.declare_parameter('bldc_ramp_rate', 400.0)  # power units/sec ramp — 400 ≈ 0.14s from min to full, change to taste
         self.declare_parameter('vel_timeout', 1.5)  # sec — safety net only: if no /velocity_controller/commands arrives at all (lost release event, dropped message), force a stop. Long enough to never cut off a real held command.
 
         modbus_port    = self.get_parameter('modbus_port').value
@@ -421,10 +421,10 @@ class RS485Bridge(Node):
     def _bldc_target(self, vel: float) -> float:
         if vel == 0.0:
             return 0.0
-        # below ~200/255 the board just clicks without actually spinning the
-        # wheel (confirmed empirically) — never ask for less than that once
-        # we actually want to move
-        return min(255.0, max(abs(vel) / self._max_speed * 255, self._min_power))
+        # Map trigger fraction linearly to [min_power, 255] so partial trigger
+        # gives proportional speed within the board's usable range.
+        frac = min(1.0, abs(vel) / self._max_speed)
+        return self._min_power + frac * (255.0 - self._min_power)
 
     def _send_bldc(self):
         """Wheels stay enabled all session (coil 0 set once at startup).
@@ -455,17 +455,15 @@ class RS485Bridge(Node):
                 if vel == 0.0:
                     status.append(f'{addr}:idle')
                     continue
-                # First move or direction change: write direction first, then speed
                 if self._bldc_dir[i] is None or reverse != self._bldc_dir[i]:
                     self._write_bit(addr, 1, reverse)
                     self._bldc_dir[i] = reverse
-                target = self._bldc_target(vel)
-                speed = int(target)
-                self._write_register(addr, 0, speed)
-                self._bldc_sent_power[i] = speed
-                self._bldc_power[i] = float(speed)
+                # Prime ramp just below min_power — running state ramps to target
+                # instead of jumping there instantly (smooth start)
+                self._bldc_power[i] = max(0.0, self._min_power - self._power_step)
+                self._bldc_sent_power[i] = 0
                 self._bldc_state[i] = 'running'
-                status.append(f'{addr}:START({"REV" if reverse else "FWD"},pwr={speed})')
+                status.append(f'{addr}:START→RAMP({"REV" if reverse else "FWD"})')
                 continue
 
             if state == 'running':
@@ -502,17 +500,14 @@ class RS485Bridge(Node):
                 continue
 
             if state == 'reversing':
-                # Motor is stopped; write new direction then restart
+                # Motor is stopped; write new direction then ramp up smoothly
                 self._write_bit(addr, 1, reverse)
                 self._bldc_dir[i] = reverse
                 if vel != 0.0:
-                    target = self._bldc_target(vel)
-                    speed = int(target)
-                    self._write_register(addr, 0, speed)
-                    self._bldc_sent_power[i] = speed
-                    self._bldc_power[i] = float(speed)
+                    self._bldc_power[i] = max(0.0, self._min_power - self._power_step)
+                    self._bldc_sent_power[i] = 0
                     self._bldc_state[i] = 'running'
-                    status.append(f'{addr}:REVERSE→RUN(pwr={speed})')
+                    status.append(f'{addr}:REVERSE→RAMP({"REV" if reverse else "FWD"})')
                 else:
                     self._bldc_state[i] = 'idle'
                     status.append(f'{addr}:REVERSE→idle')
