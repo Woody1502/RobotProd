@@ -24,10 +24,14 @@ jobs:
           # Исходный код монтируется как volume и собирается colcon при старте контейнера,
           # поэтому перестраивать образ при каждом пуше не нужно (и не работает без интернета).
           if git diff HEAD~1 --name-only 2>/dev/null | grep -qE '^(Dockerfile|docker-compose\.yml)'; then
-            # --no-pull: reuse locally cached base image (ros:jazzy-ros-base),
-            # do not fetch manifest from Docker Hub — robot may have no internet.
-            docker compose build --no-pull robot
-            docker compose up -d robot
-          else
-            docker compose up -d robot
+            # docker build always tries to pull ros:jazzy-ros-base manifest from
+            # Docker Hub — even with a local cache — and the robot has no Docker Hub
+            # access. Instead: extract apt packages from Dockerfile, install into a
+            # temp container, commit as new image. Already-installed packages are no-op.
+            PKGS=$(grep -E '^\s+(ros-jazzy-|python3-)' Dockerfile | tr -d ' \\' | grep -v '^#' | tr '\n' ' ')
+            docker run --name _apt_upgrade robotprod-robot:latest \
+              bash -c "apt-get update -qq && apt-get install -y $PKGS"
+            docker commit _apt_upgrade robotprod-robot:latest
+            docker rm _apt_upgrade
           fi
+          docker compose up -d robot
