@@ -88,8 +88,9 @@ class RS485Bridge(Node):
         self.declare_parameter('hall_to_rads',  1.0)
         self.declare_parameter('mag_port',      '/dev/ttyUSB1')
         self.declare_parameter('mag_baudrate',  9600)
-        self.declare_parameter('bldc_min_power', 200.0)  # 0-255 minimum that actually spins the wheel (~100 just clicks)
-        self.declare_parameter('bldc_ramp_rate', 400.0)  # power units/sec ramp — 400 ≈ 0.14s from min to full, change to taste
+        self.declare_parameter('bldc_min_power',  80.0)  # 0-255 minimum power sent when vel>0 (tune: below this wheels may just click)
+        self.declare_parameter('bldc_max_power', 120.0)  # 0-255 power at full trigger — cap for speed limiting
+        self.declare_parameter('bldc_ramp_rate', 400.0)  # power units/sec ramp — 400 ≈ 0.14s from min to full
         self.declare_parameter('vel_timeout', 1.5)  # sec — safety net only: if no /velocity_controller/commands arrives at all (lost release event, dropped message), force a stop. Long enough to never cut off a real held command.
 
         modbus_port    = self.get_parameter('modbus_port').value
@@ -100,6 +101,7 @@ class RS485Bridge(Node):
         mag_port       = self.get_parameter('mag_port').value
         mag_baud       = self.get_parameter('mag_baudrate').value
         self._min_power    = self.get_parameter('bldc_min_power').value
+        self._max_power    = self.get_parameter('bldc_max_power').value
         self._power_step   = self.get_parameter('bldc_ramp_rate').value / rate
         self._vel_timeout  = self.get_parameter('vel_timeout').value
 
@@ -421,10 +423,8 @@ class RS485Bridge(Node):
     def _bldc_target(self, vel: float) -> float:
         if vel == 0.0:
             return 0.0
-        # Map trigger fraction linearly to [min_power, 255] so partial trigger
-        # gives proportional speed within the board's usable range.
         frac = min(1.0, abs(vel) / self._max_speed)
-        return self._min_power + frac * (255.0 - self._min_power)
+        return self._min_power + frac * (self._max_power - self._min_power)
 
     def _send_bldc(self):
         """Wheels stay enabled all session (coil 0 set once at startup).
