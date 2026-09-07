@@ -108,15 +108,35 @@ class JoyBridge(Node):
         self._dpad_x    = 0
         self._dpad_y    = 0
         self._sep_state = 0   # 0=stopped, 1=forward, 2=reverse
+        self._enabled   = True  # web UI can disable gamepad without disconnecting
 
+        self.create_subscription(Bool, '/joy_bridge/enabled', self._on_enabled, _latched)
         self.create_timer(1.0 / rate, self._publish)
         threading.Thread(target=self._js_reader, daemon=True).start()
+
+    # ── enabled gate (web UI toggle) ────────────────────────────────────────
+
+    def _on_enabled(self, msg: Bool):
+        was_enabled = self._enabled
+        self._enabled = msg.data
+        if was_enabled and not msg.data:
+            # transitioning to disabled: stop drive and attachments immediately
+            with self._lock:
+                self._speed = 0.0
+                self._steer = 0.0
+            stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
+            self._vel_pub.publish(stop)
+            self._steer_pub.publish(Float64MultiArray(data=[0.0]))
+            self._stop_all_attachments()
+            self.get_logger().info('Gamepad disabled by web UI')
+        elif not was_enabled and msg.data:
+            self.get_logger().info('Gamepad enabled by web UI')
 
     # ── periodic drive publisher ─────────────────────────────────────────────
 
     def _publish(self):
         with self._lock:
-            if not self._connected:
+            if not self._connected or not self._enabled:
                 return
             speed = self._speed
             steer = self._steer
@@ -168,6 +188,9 @@ class JoyBridge(Node):
                             self.get_logger().info(
                                 f'[JOY] type={etype_raw} num={number} val={value}',
                                 throttle_duration_sec=0.5)
+
+                        if not self._enabled:
+                            continue
 
                         if etype_raw == _JS_EVENT_AXIS:
                             handled = True

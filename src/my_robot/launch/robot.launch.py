@@ -135,12 +135,19 @@ def generate_launch_description():
         output='screen',
     )
 
+    web_server = Node(
+        package='my_robot',
+        executable='web_server',
+        output='screen',
+    )
+
     return LaunchDescription([
         robot_state_publisher,
         rs485_bridge,
         usb_camera,
         joy_bridge,
         foxglove_bridge,
+        web_server,
         ekf_odom,
         ekf_map,
         TimerAction(period=2.0, actions=[acker_odom]),

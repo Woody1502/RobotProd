@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y \
     python3-serial \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install minimalmodbus pynput --break-system-packages
+RUN pip3 install minimalmodbus pynput fastapi "uvicorn[standard]" --break-system-packages
 
 RUN apt-get update && apt-get install -y socat && rm -rf /var/lib/apt/lists/*
 

@@ -36,6 +36,7 @@ setup(
             'field_mission = my_robot.field_mission_node:main',
             'usb_camera    = my_robot.camera_node:main',
             'joy_bridge    = my_robot.joy_bridge:main',
+            'web_server    = my_robot.web_server:main',
         ],
     },
 )
