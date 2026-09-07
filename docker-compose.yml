@@ -28,22 +28,13 @@ services:
       - ./install:/ros2_ws/install
       - ./log:/ros2_ws/log
       - /dev/input:/dev/input  # gamepad (динамически подключается по BT)
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     command: >
       bash -c "source /opt/ros/jazzy/setup.bash &&
                colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release &&
                source install/setup.bash &&
+               nginx &&
                ros2 launch my_robot robot.launch.py"
-    restart: unless-stopped
-
-  nginx:
-    image: nginx:alpine
-    container_name: agrorobot_nginx
-    network_mode: host
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./src/my_robot/my_robot/web/static:/usr/share/nginx/html:ro
-    depends_on:
-      - robot
     restart: unless-stopped
 
   # Эмулятор WiFi-RS485 адаптера для теста без реального робота. Не
