@@ -29,9 +29,10 @@ jobs:
             # access. Instead: extract apt packages from Dockerfile, install into a
             # temp container, commit as new image. Already-installed packages are no-op.
             PKGS=$(grep -E '^\s+(ros-jazzy-|python3-)' Dockerfile | tr -d ' \\' | grep -v '^#' | tr '\n' ' ')
-            docker run --name _apt_upgrade robotprod-robot:latest \
-              bash -c "apt-get update -qq && apt-get install -y $PKGS"
-            docker commit _apt_upgrade robotprod-robot:latest
-            docker rm _apt_upgrade
+            PIP=$(grep 'pip3 install' Dockerfile | sed 's/.*pip3 install//' | sed 's/--break-system-packages//' | tr -d '\\')
+            docker run --name apt-upgrade robotprod-robot:latest \
+              bash -c "apt-get update -qq && apt-get install -y $PKGS && pip3 install $PIP --break-system-packages --quiet"
+            docker commit apt-upgrade robotprod-robot:latest
+            docker rm apt-upgrade
           fi
           docker compose up -d robot
