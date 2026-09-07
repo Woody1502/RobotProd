@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>FitoBot</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>🤖 FitoBot</h1>
+  <div class="header-actions">
+    <button id="btn-gp" class="btn pill active">Геймпад ВКЛ</button>
+    <button id="btn-stop" class="btn pill danger">⛔ СТОП</button>
+  </div>
+</header>
+
+<div class="statusbar">
+  <span>🎮 <span id="s-gp">—</span></span>
+  <span>⚡ <span id="s-speed">0.0</span> m/s</span>
+</div>
+
+<div class="camera">
+  <img id="cam" src="/video" alt="">
+  <div id="no-signal" hidden>Нет сигнала камеры</div>
+</div>
+
+<main class="grid">
+
+  <div class="card">
+    <h3>Ковш</h3>
+    <div class="row">
+      <button class="btn hold" data-dev="bucket" data-on="1">▲</button>
+      <button class="btn hold" data-dev="bucket" data-on="2">▼</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Рама</h3>
+    <div class="row">
+      <button class="btn hold" data-dev="frame" data-on="1">▲</button>
+      <button class="btn hold" data-dev="frame" data-on="2">▼</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Бункер</h3>
+    <div class="row">
+      <button class="btn hold" data-dev="bunker" data-on="1">▲</button>
+      <button class="btn hold" data-dev="bunker" data-on="2">▼</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Сепаратор</h3>
+    <button id="btn-sep" class="btn toggle" style="width:100%">◉ Включить</button>
+  </div>
+
+  <div class="card span2">
+    <h3>Манипулятор</h3>
+    <div class="cross">
+      <span></span>
+      <button class="btn hold" data-dev="manipulator" data-on="1">▲</button>
+      <span></span>
+      <button class="btn hold" data-dev="manipulator" data-on="3">◀</button>
+      <span></span>
+      <button class="btn hold" data-dev="manipulator" data-on="4">▶</button>
+      <span></span>
+      <button class="btn hold" data-dev="manipulator" data-on="2">▼</button>
+      <span></span>
+    </div>
+  </div>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

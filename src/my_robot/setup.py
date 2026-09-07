@@ -20,6 +20,8 @@ setup(
             glob(os.path.join('meshes', '*.*'))),
         (os.path.join('share', package_name, 'config'),
             glob(os.path.join('config', '*.*'))),
+        (os.path.join('share', package_name, 'web', 'static'),
+            glob(os.path.join('my_robot', 'web', 'static', '*'))),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

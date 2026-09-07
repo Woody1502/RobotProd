@@ -1,0 +1,177 @@
+/* ── Reset & base ───────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+  --bg:      #111;
+  --surface: #1c1c1c;
+  --border:  #2a2a2a;
+  --text:    #ddd;
+  --muted:   #666;
+  --accent:  #1a5c2e;
+  --danger:  #6b1c1c;
+  --pressed: #363636;
+  --radius:  10px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  max-width: 600px;
+  margin: 0 auto;
+  min-height: 100dvh;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #181818;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── Status bar ─────────────────────────────────────────────────────────── */
+
+.statusbar {
+  display: flex;
+  gap: 16px;
+  padding: 5px 12px;
+  background: #141414;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Camera ─────────────────────────────────────────────────────────────── */
+
+.camera {
+  position: relative;
+  background: #000;
+  width: 100%;
+}
+
+.camera img {
+  width: 100%;
+  display: block;
+}
+
+.camera #no-signal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #444;
+  font-size: 13px;
+}
+
+.camera #no-signal[hidden] {
+  display: none;
+}
+
+/* ── Controls grid ──────────────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 8px;
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.card h3 {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.span2 {
+  grid-column: span 2;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
+.btn {
+  border: none;
+  border-radius: 8px;
+  background: #252525;
+  color: #bbb;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  transition: background .08s;
+  font-size: 13px;
+}
+
+.btn.hold {
+  flex: 1;
+  height: 54px;
+  font-size: 22px;
+}
+
+.btn.pill {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
+  white-space: nowrap;
+  font-size: 12px;
+  touch-action: manipulation;
+}
+
+.btn.toggle {
+  height: 54px;
+  font-size: 14px;
+  touch-action: manipulation;
+}
+
+.btn.active  { background: var(--accent); color: #7fff9a; }
+.btn.danger  { background: var(--danger); color: #ffaaaa; }
+.btn.pressed { background: var(--pressed); }
+
+/* ── Manipulator cross ──────────────────────────────────────────────────── */
+
+.cross {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 44px);
+  gap: 5px;
+}
+
+.cross span {
+  background: transparent;
+}

@@ -34,4 +34,4 @@ jobs:
             docker commit _apt_upgrade robotprod-robot:latest
             docker rm _apt_upgrade
           fi
-          docker compose up -d robot
+          docker compose up -d robot nginx
