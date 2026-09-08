@@ -9,12 +9,11 @@ from ..node import RobotNode
 def make_router(node: RobotNode) -> APIRouter:
     r = APIRouter()
 
-    @r.get('/video')
-    async def video():
-        async def _mjpeg():
+    def _mjpeg_gen(lock, getter):
+        async def _gen():
             while True:
-                with node._frame_lock:
-                    jpeg = node._latest_jpeg
+                with lock:
+                    jpeg = getter()
                 if jpeg:
                     yield (
                         b'--frame\r\n'
@@ -23,9 +22,19 @@ def make_router(node: RobotNode) -> APIRouter:
                         b'\r\n'
                     )
                 await asyncio.sleep(0.033)
+        return _gen()
 
+    @r.get('/video')
+    async def video():
         return StreamingResponse(
-            _mjpeg(),
+            _mjpeg_gen(node._frame_lock, lambda: node._latest_jpeg),
+            media_type='multipart/x-mixed-replace; boundary=frame',
+        )
+
+    @r.get('/video/mask')
+    async def video_mask():
+        return StreamingResponse(
+            _mjpeg_gen(node._graphic_lock, lambda: node._latest_graphic),
             media_type='multipart/x-mixed-replace; boundary=frame',
         )
 

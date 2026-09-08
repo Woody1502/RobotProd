@@ -91,6 +91,32 @@ header h1 {
   display: none;
 }
 
+.cam-toggle {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+}
+
+.cam-tab {
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  background: rgba(0,0,0,.55);
+  color: #ccc;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition: background .1s, color .1s;
+}
+
+.cam-tab.active {
+  background: rgba(26,92,46,.85);
+  color: #7fff9a;
+}
+
 /* ── Controls grid ──────────────────────────────────────────────────────── */
 
 .grid {

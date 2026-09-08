@@ -34,11 +34,18 @@ class RobotNode(Node):
             Float64MultiArray, '/velocity_controller/commands', self._on_vel, 10)
         self.create_subscription(Image, '/camera/depth/pure_image', self._on_image, 10)
 
-        self._bridge     = CvBridge()
-        self._frame_lock = threading.Lock()
+        self._autopilot_pub = self.create_publisher(Bool, '/autopilot/enable', 10)
+
+        self.create_subscription(Image, '/vs_nav/graphic', self._on_graphic, 10)
+
+        self._bridge      = CvBridge()
+        self._frame_lock  = threading.Lock()
         self._latest_jpeg: bytes | None = None
 
-        self._status: dict = {'gp_connected': False, 'speed': 0.0}
+        self._graphic_lock = threading.Lock()
+        self._latest_graphic: bytes | None = None
+
+        self._status: dict = {'gp_connected': False, 'speed': 0.0, 'autopilot': False}
         self._ws_clients: Set[WebSocket] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -52,6 +59,15 @@ class RobotNode(Node):
         if msg.data:
             self._status['speed'] = abs(float(msg.data[0]))
             self._push_status()
+
+    def _on_graphic(self, msg: Image):
+        try:
+            frame = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
+        except Exception:
+            return
+        _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
+        with self._graphic_lock:
+            self._latest_graphic = buf.tobytes()
 
     def _on_image(self, msg: Image):
         try:
@@ -98,3 +114,8 @@ class RobotNode(Node):
 
     def set_gamepad_enabled(self, enabled: bool):
         self._gp_en_pub.publish(Bool(data=enabled))
+
+    def set_autopilot_enabled(self, enabled: bool):
+        self._autopilot_pub.publish(Bool(data=enabled))
+        self._status['autopilot'] = enabled
+        self._push_status()

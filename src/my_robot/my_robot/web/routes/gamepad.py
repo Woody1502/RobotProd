@@ -10,4 +10,9 @@ def make_router(node: RobotNode) -> APIRouter:
         node.set_gamepad_enabled(bool(value))
         return {'ok': True}
 
+    @r.post('/autopilot/enabled/{value}')
+    async def autopilot_enabled(value: int):
+        node.set_autopilot_enabled(bool(value))
+        return {'ok': True}
+
     return r

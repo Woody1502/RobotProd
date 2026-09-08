@@ -19,11 +19,16 @@
 <div class="statusbar">
   <span>🎮 <span id="s-gp">—</span></span>
   <span>⚡ <span id="s-speed">0.0</span> m/s</span>
+  <span>🤖 <span id="s-ap">ВЫКЛ</span></span>
 </div>
 
 <div class="camera">
   <img id="cam" src="/video" alt="">
   <div id="no-signal" hidden>Нет сигнала камеры</div>
+  <div class="cam-toggle">
+    <button id="btn-cam-raw"  class="cam-tab active">Камера</button>
+    <button id="btn-cam-mask" class="cam-tab">Маска</button>
+  </div>
 </div>
 
 <main class="grid">
@@ -55,6 +60,11 @@
   <div class="card">
     <h3>Сепаратор</h3>
     <button id="btn-sep" class="btn toggle" style="width:100%">◉ Включить</button>
+  </div>
+
+  <div class="card span2">
+    <h3>Автопилот</h3>
+    <button id="btn-ap" class="btn toggle" style="width:100%">▶ Включить</button>
   </div>
 
   <div class="card span2">

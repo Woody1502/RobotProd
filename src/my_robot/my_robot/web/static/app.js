@@ -4,6 +4,7 @@
 
 const sGp    = document.getElementById('s-gp');
 const sSpeed = document.getElementById('s-speed');
+const sAp    = document.getElementById('s-ap');
 
 function connectWs() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
@@ -12,6 +13,15 @@ function connectWs() {
     const d = JSON.parse(data);
     sGp.textContent    = d.gp_connected ? 'Подключён' : 'Нет связи';
     sSpeed.textContent = (d.speed ?? 0).toFixed(1);
+    if (d.autopilot !== undefined) {
+      sAp.textContent = d.autopilot ? 'ВКЛ' : 'ВЫКЛ';
+      // sync button state if status came from elsewhere
+      if (apOn !== d.autopilot) {
+        apOn = d.autopilot;
+        btnAp.textContent = apOn ? '⏹ Остановить автопилот' : '▶ Включить автопилот';
+        btnAp.classList.toggle('active', apOn);
+      }
+    }
   };
 
   ws.onclose = () => setTimeout(connectWs, 3000);
@@ -26,6 +36,18 @@ const noSig   = document.getElementById('no-signal');
 
 cam.onerror = () => { cam.hidden = true;  noSig.hidden = false; };
 cam.onload  = () => { cam.hidden = false; noSig.hidden = true;  };
+
+const btnCamRaw  = document.getElementById('btn-cam-raw');
+const btnCamMask = document.getElementById('btn-cam-mask');
+
+function switchCam(src, activeBtn, inactiveBtn) {
+  cam.src = src;
+  activeBtn.classList.add('active');
+  inactiveBtn.classList.remove('active');
+}
+
+btnCamRaw .addEventListener('click', () => switchCam('/video',      btnCamRaw,  btnCamMask));
+btnCamMask.addEventListener('click', () => switchCam('/video/mask', btnCamMask, btnCamRaw));
 
 // ── Hold-to-run attachment buttons ───────────────────────────────────────
 
@@ -76,4 +98,16 @@ btnSep.addEventListener('click', () => {
   fetch(`/cmd/separator/${sepOn ? 2 : 0}`, { method: 'POST' });
   btnSep.textContent = sepOn ? '◉ Выключить' : '◉ Включить';
   btnSep.classList.toggle('active', sepOn);
+});
+
+// ── Autopilot toggle ──────────────────────────────────────────────────────
+
+let apOn = false;
+const btnAp = document.getElementById('btn-ap');
+
+btnAp.addEventListener('click', () => {
+  apOn = !apOn;
+  fetch(`/autopilot/enabled/${apOn ? 1 : 0}`, { method: 'POST' });
+  btnAp.textContent = apOn ? '⏹ Остановить автопилот' : '▶ Включить автопилот';
+  btnAp.classList.toggle('active', apOn);
 });
