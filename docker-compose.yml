@@ -33,6 +33,7 @@ services:
       bash -c "source /opt/ros/jazzy/setup.bash &&
                colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release &&
                source install/setup.bash &&
+               rm -f /etc/nginx/sites-enabled/default &&
                nginx &&
                ros2 launch my_robot robot.launch.py"
     restart: unless-stopped
