@@ -29,25 +29,51 @@ function connectWs() {
 
 connectWs();
 
-// ── Camera ────────────────────────────────────────────────────────────────
+// ── Camera snapshot polling ───────────────────────────────────────────────
 
-const cam     = document.getElementById('cam');
-const noSig   = document.getElementById('no-signal');
+const cam    = document.getElementById('cam');
+const noSig  = document.getElementById('no-signal');
 
-cam.onerror = () => { cam.hidden = true;  noSig.hidden = false; };
-cam.onload  = () => { cam.hidden = false; noSig.hidden = true;  };
+let camEndpoint = '/snapshot';
+let camTimer    = null;
+
+function pollFrame() {
+  const url = camEndpoint + '?t=' + Date.now();
+  const img  = new Image();
+  img.onload = () => {
+    cam.src       = img.src;
+    cam.hidden    = false;
+    noSig.hidden  = true;
+  };
+  img.onerror = () => {
+    cam.hidden   = true;
+    noSig.hidden = false;
+  };
+  img.src = url;
+}
+
+function startCam() {
+  if (camTimer) clearInterval(camTimer);
+  pollFrame();
+  camTimer = setInterval(pollFrame, 100); // 10 fps
+}
+
+startCam();
 
 const btnCamRaw  = document.getElementById('btn-cam-raw');
 const btnCamMask = document.getElementById('btn-cam-mask');
 
-function switchCam(src, activeBtn, inactiveBtn) {
-  cam.src = src;
-  activeBtn.classList.add('active');
-  inactiveBtn.classList.remove('active');
-}
+btnCamRaw.addEventListener('click', () => {
+  camEndpoint = '/snapshot';
+  btnCamRaw.classList.add('active');
+  btnCamMask.classList.remove('active');
+});
 
-btnCamRaw .addEventListener('click', () => switchCam('/video',      btnCamRaw,  btnCamMask));
-btnCamMask.addEventListener('click', () => switchCam('/video/mask', btnCamMask, btnCamRaw));
+btnCamMask.addEventListener('click', () => {
+  camEndpoint = '/snapshot/mask';
+  btnCamMask.classList.add('active');
+  btnCamRaw.classList.remove('active');
+});
 
 // ── Hold-to-run attachment buttons ───────────────────────────────────────
 

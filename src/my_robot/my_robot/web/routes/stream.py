@@ -1,42 +1,30 @@
-import asyncio
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 from ..node import RobotNode
+
+_NO_CACHE = {'Cache-Control': 'no-store, no-cache', 'Pragma': 'no-cache'}
 
 
 def make_router(node: RobotNode) -> APIRouter:
     r = APIRouter()
 
-    def _mjpeg_gen(lock, getter):
-        async def _gen():
-            while True:
-                with lock:
-                    jpeg = getter()
-                if jpeg:
-                    yield (
-                        b'--frame\r\n'
-                        b'Content-Type: image/jpeg\r\n\r\n'
-                        + jpeg +
-                        b'\r\n'
-                    )
-                await asyncio.sleep(0.033)
-        return _gen()
+    @r.get('/snapshot')
+    async def snapshot():
+        with node._frame_lock:
+            data = node._latest_jpeg
+        if not data:
+            return Response(status_code=204)
+        return Response(content=data, media_type='image/jpeg', headers=_NO_CACHE)
 
-    @r.get('/video')
-    async def video():
-        return StreamingResponse(
-            _mjpeg_gen(node._frame_lock, lambda: node._latest_jpeg),
-            media_type='multipart/x-mixed-replace; boundary=frame',
-        )
-
-    @r.get('/video/mask')
-    async def video_mask():
-        return StreamingResponse(
-            _mjpeg_gen(node._graphic_lock, lambda: node._latest_graphic),
-            media_type='multipart/x-mixed-replace; boundary=frame',
-        )
+    @r.get('/snapshot/mask')
+    async def snapshot_mask():
+        with node._graphic_lock:
+            data = node._latest_graphic
+        if not data:
+            return Response(status_code=204)
+        return Response(content=data, media_type='image/jpeg', headers=_NO_CACHE)
 
     @r.websocket('/ws')
     async def ws(websocket: WebSocket):
