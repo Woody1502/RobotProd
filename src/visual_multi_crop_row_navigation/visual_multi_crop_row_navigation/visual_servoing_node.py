@@ -263,10 +263,6 @@ class VisualServoingNode(Node):
 
     # main function to guide the robot through crop rows
     def navigate(self):
-        # Если mission node поставил VS на паузу — не публикуем команды
-        if not self.vs_active:
-            return
-
         # get the currently used image
         primaryRGB, primaryDepth = self.getProcessingImage(self.frontImg,
                                                            self.frontDepth,
@@ -278,33 +274,24 @@ class VisualServoingNode(Node):
             time.sleep(0.5)
             self.imageProcessor.findCropLane(primaryRGB, primaryDepth, mode='RGB-D')
         else:
-            # Публикуем сигнал конца ряда для mission node
-            row_end_msg = Bool()
-            row_end_msg.data = bool(self.imageProcessor.cropRowEnd)
-            self.row_end_pub.publish(row_end_msg)
-
-            # if the robot is currently following a line and is not turning just compute the controls
-          
             self.imageProcessor.trackCropLane(self.navigationMode)
-            #ctlCommands = self.computeControls(self.imageProcessor.cropLaneFound,
-                                                # self.imageProcessor.P,
-                                                # self.imageProcessor.ang)
-            
-            
-            
-            
-            #self.setRobotVelocities(ctlCommands[0], 0.0, ctlCommands[1])
-            #print('CTLcommands:',ctlCommands)
-            position_command = Float64MultiArray()
-            if self.imageProcessor.P is not None:
-                lateral_correction = self.lateralGain * self.imageProcessor.P[0]
-            else:
-                lateral_correction = 0.0
-            position_command.data = [-self.imageProcessor.ang - lateral_correction]
-            self.position_pub.publish(position_command)
 
-                
+            # Визуализация публикуется всегда — для просмотра маски без движения
             self.publishImageTopics()
+
+            # Команды руля только когда vs_active (управление включено явно)
+            if self.vs_active:
+                row_end_msg = Bool()
+                row_end_msg.data = bool(self.imageProcessor.cropRowEnd)
+                self.row_end_pub.publish(row_end_msg)
+
+                position_command = Float64MultiArray()
+                if self.imageProcessor.P is not None:
+                    lateral_correction = self.lateralGain * self.imageProcessor.P[0]
+                else:
+                    lateral_correction = 0.0
+                position_command.data = [-self.imageProcessor.ang - lateral_correction]
+                self.position_pub.publish(position_command)
 
             # print("#[INF] m:",
             #     self.navigationMode,
