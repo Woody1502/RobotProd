@@ -42,6 +42,11 @@ cam.hidden = true;
 
 function connectVideoWs() {
   if (videoWs) { videoWs.onclose = null; videoWs.close(); }
+  // reset display while waiting for first frame on new stream
+  cam.hidden  = true;
+  noSig.hidden = false;
+  if (prevBlobUrl) { URL.revokeObjectURL(prevBlobUrl); prevBlobUrl = null; }
+  cam.src = '';
 
   videoWs = new WebSocket(`ws://${location.host}${videoWsPath}`);
   videoWs.binaryType = 'blob';
