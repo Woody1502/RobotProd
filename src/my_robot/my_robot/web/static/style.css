@@ -70,6 +70,7 @@ header h1 {
   position: relative;
   background: #000;
   width: 100%;
+  min-height: 160px;
 }
 
 .camera img {

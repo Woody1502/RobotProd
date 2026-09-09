@@ -38,6 +38,8 @@ let videoWs      = null;
 let videoWsPath  = '/ws/camera';
 let prevBlobUrl  = null;
 
+cam.hidden = true;
+
 function connectVideoWs() {
   if (videoWs) { videoWs.onclose = null; videoWs.close(); }
 
