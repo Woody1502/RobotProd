@@ -29,48 +29,49 @@ function connectWs() {
 
 connectWs();
 
-// ── Camera snapshot polling ───────────────────────────────────────────────
+// ── Camera via WebSocket ──────────────────────────────────────────────────
 
-const cam    = document.getElementById('cam');
-const noSig  = document.getElementById('no-signal');
+const cam   = document.getElementById('cam');
+const noSig = document.getElementById('no-signal');
 
-let camEndpoint = '/snapshot';
-let camTimer    = null;
+let videoWs      = null;
+let videoWsPath  = '/ws/camera';
+let prevBlobUrl  = null;
 
-function pollFrame() {
-  const url = camEndpoint + '?t=' + Date.now();
-  const img  = new Image();
-  img.onload = () => {
-    cam.src       = img.src;
-    cam.hidden    = false;
-    noSig.hidden  = true;
+function connectVideoWs() {
+  if (videoWs) { videoWs.onclose = null; videoWs.close(); }
+
+  videoWs = new WebSocket(`ws://${location.host}${videoWsPath}`);
+  videoWs.binaryType = 'blob';
+
+  videoWs.onmessage = ({ data }) => {
+    const url = URL.createObjectURL(data);
+    cam.src      = url;
+    cam.hidden   = false;
+    noSig.hidden = true;
+    if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+    prevBlobUrl = url;
   };
-  img.onerror = () => {
-    cam.hidden   = true;
-    noSig.hidden = false;
-  };
-  img.src = url;
+
+  videoWs.onerror = () => { cam.hidden = true; noSig.hidden = false; };
+  videoWs.onclose = () => setTimeout(connectVideoWs, 3000);
 }
 
-function startCam() {
-  if (camTimer) clearInterval(camTimer);
-  pollFrame();
-  camTimer = setInterval(pollFrame, 100); // 10 fps
-}
-
-startCam();
+connectVideoWs();
 
 const btnCamRaw  = document.getElementById('btn-cam-raw');
 const btnCamMask = document.getElementById('btn-cam-mask');
 
 btnCamRaw.addEventListener('click', () => {
-  camEndpoint = '/snapshot';
+  videoWsPath = '/ws/camera';
+  connectVideoWs();
   btnCamRaw.classList.add('active');
   btnCamMask.classList.remove('active');
 });
 
 btnCamMask.addEventListener('click', () => {
-  camEndpoint = '/snapshot/mask';
+  videoWsPath = '/ws/camera/mask';
+  connectVideoWs();
   btnCamMask.classList.add('active');
   btnCamRaw.classList.remove('active');
 });
