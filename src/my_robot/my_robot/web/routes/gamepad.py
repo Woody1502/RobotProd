@@ -15,4 +15,9 @@ def make_router(node: RobotNode) -> APIRouter:
         node.set_autopilot_enabled(bool(value))
         return {'ok': True}
 
+    @r.post('/vs/reset')
+    async def vs_reset():
+        node.reset_crop_lane()
+        return {'ok': True}
+
     return r

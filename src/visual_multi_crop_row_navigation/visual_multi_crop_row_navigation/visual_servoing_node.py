@@ -112,10 +112,10 @@ class VisualServoingNode(Node):
             ('scanWindowWidth', 64),
             ('enable_roi', True),
             ('p1', [0, 0]),
-            ('p2', [350, 0]),
+            ('p2', [400, 0]),
             ('p3', [10, 720]),
             ('p4', [0, 720]),
-            ('p5', [830, 0]),
+            ('p5', [880, 0]),
             ('p6', [1280, 0]),
             ('p7', [1280, 720]),
             ('p8', [1270, 720]),
@@ -235,6 +235,9 @@ class VisualServoingNode(Node):
         # ROI live update from GUI: [left_margin, right_margin, enable(0/1)]
         self.create_subscription(Int32MultiArray, '/vs_nav/roi', self._roi_callback, 10)
 
+        # manual "restart row search" trigger (web UI button / other tools)
+        self.create_subscription(Bool, '/vs_nav/reset_request', self._reset_request_cb, 10)
+
 
     def _roi_callback(self, msg):
         if len(msg.data) < 5:
@@ -252,6 +255,10 @@ class VisualServoingNode(Node):
 
     def _vs_active_cb(self, msg: Bool):
         self.vs_active = msg.data
+
+    def _reset_request_cb(self, msg: Bool):
+        if msg.data:
+            self.imageProcessor.reset()
 
     def _joy_callback(self, msg):
         buttons = list(msg.buttons)

@@ -145,3 +145,13 @@ btnAp.addEventListener('click', () => {
   btnAp.textContent = apOn ? '⏹ Остановить автопилот' : '▶ Включить автопилот';
   btnAp.classList.toggle('active', apOn);
 });
+
+// ── Restart crop-row search ─────────────────────────────────────────────
+
+const btnVsReset = document.getElementById('btn-vs-reset');
+
+btnVsReset.addEventListener('click', () => {
+  fetch('/vs/reset', { method: 'POST' });
+  btnVsReset.classList.add('active');
+  setTimeout(() => btnVsReset.classList.remove('active'), 400);
+});

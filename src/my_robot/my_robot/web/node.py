@@ -35,6 +35,7 @@ class RobotNode(Node):
         self.create_subscription(Image, '/camera/depth/pure_image', self._on_image, 10)
 
         self._autopilot_pub = self.create_publisher(Bool, '/autopilot/enable', 10)
+        self._vs_reset_pub = self.create_publisher(Bool, '/vs_nav/reset_request', 10)
 
         self.create_subscription(Image, '/vs_nav/graphic', self._on_graphic, 10)
 
@@ -119,3 +120,6 @@ class RobotNode(Node):
         self._autopilot_pub.publish(Bool(data=enabled))
         self._status['autopilot'] = enabled
         self._push_status()
+
+    def reset_crop_lane(self):
+        self._vs_reset_pub.publish(Bool(data=True))

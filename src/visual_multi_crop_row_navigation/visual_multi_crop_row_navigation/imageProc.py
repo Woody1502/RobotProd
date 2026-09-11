@@ -121,26 +121,98 @@ class imageProc:
         if not self.isInitialized:
             print("#[INF] Find Crop Lane")
             try:
-                self.lines2D, self.linesROIs2D = self.findCropRows2D(self.primaryRGBImg)
+                if mode == 'depth':
+                    self.lines2D, self.linesROIs2D = self.findCropRowsDepth(self.primaryDepthImg)
+                else:
+                    self.lines2D, self.linesROIs2D = self.findCropRows2D(self.primaryRGBImg)
             except Exception:
                 return False
-            # self.lines3D, self.linesROIs3D = self.findCropRows3D(self.mask, self.plantCenters2D, self.primaryDepthImg)
-            # merge both predictions to get more robust results!
-      
+
         return self.cropLaneFound
 
     def findCropRows3D(self, maskImg, plantCenters2D, depthImg):
         lines = []
         linesROIs = []
-        # project the plant centers to 3D
+        return lines, linesROIs
 
-        # cluster points 
+    def findCropRowsDepth(self, depthImg):
+        """Detect crop rows from depth image column profile.
 
-        # fit line on each cluster
+        Row tops are closer to the camera (smaller depth value) than
+        inter-row gaps. Compute the column-wise minimum depth in the
+        search region, smooth it, find peaks → row centre x-positions.
 
-        # project back 3D points to image
+        Returns lines/linesROIs in the same [xB, xM] format as
+        findCropRows2D so the rest of the pipeline is unchanged.
+        """
+        from scipy.signal import savgol_filter, find_peaks
 
-        # return the resutls
+        h, w = depthImg.shape[:2]
+        y0 = self.trackerParams['bottomOffset']
+        y1 = h - self.trackerParams['topOffset']
+        region = depthImg[y0:y1, :].copy().astype(np.float32)
+
+        # Replace invalid/zero depth with local max so it doesn't look like a close row
+        invalid = region == 0
+        if invalid.any():
+            region[invalid] = region[~invalid].max() if (~invalid).any() else 1.0
+
+        # Column-wise minimum: lowest depth value = tallest point in each column
+        col_profile = np.min(region, axis=0)
+
+        # Smooth to suppress sensor noise
+        win = min(51, w // 10 | 1)   # odd window, at most 51px
+        if win >= 5:
+            col_profile = savgol_filter(col_profile, window_length=win, polyorder=3)
+
+        # Negate so row tops (small depth = close) become peaks
+        peaks, props = find_peaks(-col_profile,
+                                  distance=self.trackerParams['trackingBoxWidth'] // 2,
+                                  prominence=col_profile.std() * 0.3)
+
+        print(f'[Depth] found {len(peaks)} row candidates at x={peaks.tolist()}')
+
+        if len(peaks) == 0:
+            self.cropLaneFound = False
+            return np.zeros((0, 2)), np.zeros((0, 1))
+
+        # Estimate line slope for each peak: find x of min-depth per row y
+        # within a horizontal strip around the peak. A vertical row → slope≈0.
+        lines = np.zeros((len(peaks), 2))
+        linesROIs = np.zeros((len(peaks), 1))
+        for idx, px in enumerate(peaks):
+            half = self.trackerParams['trackingBoxWidth'] // 2
+            x0 = max(0, int(px) - half)
+            x1 = min(w, int(px) + half)
+            strip = region[:, x0:x1]
+            # x of minimum depth at each y level
+            local_x = np.argmin(strip, axis=1) + x0
+            ys = np.arange(len(local_x))
+            # fit x = xM * y + xB
+            coeffs = np.polyfit(ys, local_x, 1)
+            xM, xB = float(coeffs[0]), float(coeffs[1])
+            lines[idx, :] = [xB, xM]
+            linesROIs[idx, :] = float(px)
+
+        # Reuse the same peak-validation logic as the 2D path
+        self.CropRows, self.trackingBoxLoc = self.findCropRowsInMVSignal(
+            np.array([0]),          # dummy peaksPos — one "transition"
+            np.arange(len(peaks)),  # all peaks are negative peaks (row centres)
+            np.zeros(len(peaks)),   # flat mvSignal → all equal quality
+            lines,
+            linesROIs,
+        )
+        self.numOfCropRows = len(self.trackingBoxLoc)
+        self.lostCropRows = list(np.zeros(self.numOfCropRows))
+
+        if self.numOfCropRows > 0:
+            self.isInitialized = True
+            self.cropLaneFound = True
+            print(f'[Depth] initialized — {self.numOfCropRows} rows, '
+                  f'positions: {self.CropRows[:, 0].tolist()}')
+        else:
+            self.cropLaneFound = False
+
         return lines, linesROIs
 
     def findCropRows2D(self, rgbImg):
@@ -224,17 +296,31 @@ class imageProc:
                 qualifiedLines = lines[peaksNeg]
                 windowLocations = np.mean(linesROIs[peaksNeg])
 
-        # if there are no positive peaks but negative ones: no crop
-        # row transition -> there might be just one line
+        # if there are no positive peaks but negative ones: no crop row
+        # transition was detected by the prominence check, but that does not
+        # mean there is only one row - group the stable (negative-peak)
+        # windows by their x-position so distinct, far-apart rows are each
+        # kept instead of collapsing everything to a single "best" line
         elif len(peaksPos) == 0 and len(peaksNeg) != 0 and len(mvSignal) != 0:
-            peaksNegLine = peaksNeg
-            bestLine = np.where(mvSignal[peaksNegLine] == np.min(mvSignal[peaksNegLine]))[0][0]
+            lineX = lines[peaksNeg, 0]
+            order = np.argsort(lineX)
+            sortedNeg = peaksNeg[order]
+            sortedX = lineX[order]
 
-            qualifiedLines = np.zeros((1, 2))
-            windowLocations = np.zeros((1, 1))
+            clusterGapPx = max(self.trackerParams["trackingBoxWidth"] * 2, 100)
+            groups = [[sortedNeg[0]]]
+            for i in range(1, len(sortedNeg)):
+                if sortedX[i] - sortedX[i - 1] > clusterGapPx:
+                    groups.append([])
+                groups[-1].append(sortedNeg[i])
 
-            qualifiedLines[0, :] = lines[peaksNegLine[bestLine]]
-            windowLocations[0] = linesROIs[peaksNegLine[bestLine]]
+            qualifiedLines = np.zeros((len(groups), 2))
+            windowLocations = np.zeros((len(groups), 1))
+            for gidx, group in enumerate(groups):
+                group = np.array(group)
+                bestLine = group[np.argmin(mvSignal[group])]
+                qualifiedLines[gidx, :] = lines[bestLine]
+                windowLocations[gidx, :] = linesROIs[bestLine]
         else:
             qualifiedLines = []
             windowLocations = []
