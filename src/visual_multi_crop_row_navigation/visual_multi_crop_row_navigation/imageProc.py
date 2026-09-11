@@ -74,6 +74,14 @@ class imageProc:
         self.P = None
         self.ang = 0.0
 
+        # a single noisy frame that momentarily fails to find >=2 points in
+        # one tracking box shouldn't discard all tracking and force a blind
+        # full-image re-scan (which is how a stable 2-row track randomly
+        # collapses to whichever single row's segmentation looked best in
+        # that one noisy frame). Tolerate a few consecutive misses first.
+        self.lostTrackCount = 0
+        self.lostTrackGrace = 5
+
         self.trackingBoxLoc = []
 
         # features
@@ -493,12 +501,21 @@ class imageProc:
                 #self.ang = computeTheta(self.mainLine_up, self.mainLine_down)
                 angle_from_horizontal = computeTheta(self.mainLine_up, self.mainLine_down)
                 self.ang = (np.pi / 2) - (-angle_from_horizontal)  # Переводим в вертикальную ось
-                #self.ang = np.clip(self.ang, -0.4, 0.4)  
+                #self.ang = np.clip(self.ang, -0.4, 0.4)
                 self.cropLaneFound = True
+                self.lostTrackCount = 0
 
             else:
-                print("#[ERR] Lost at least one line")
-                self.cropLaneFound = False
+                self.lostTrackCount += 1
+                print(f"#[WARN] Lost at least one line this frame "
+                      f"({self.lostTrackCount}/{self.lostTrackGrace}) — "
+                      f"keeping previous track")
+                if self.lostTrackCount >= self.lostTrackGrace:
+                    print("#[ERR] Lost track for too many frames in a row - forcing re-scan")
+                    self.cropLaneFound = False
+                # else: keep self.cropLaneFound True and reuse the last good
+                # self.CropRows/self.P/self.ang/self.trackingBoxLoc so a
+                # single bad frame doesn't blow away a stable multi-row track
         else:
             print('Running rest()..')
 
