@@ -92,6 +92,8 @@ class RS485Bridge(Node):
         self.declare_parameter('bldc_max_power', 120.0)  # 0-255 power at full trigger — cap for speed limiting
         self.declare_parameter('bldc_ramp_rate', 400.0)  # power units/sec ramp — 400 ≈ 0.14s from min to full
         self.declare_parameter('vel_timeout', 1.5)  # sec — safety net only: if no /velocity_controller/commands arrives at all (lost release event, dropped message), force a stop. Long enough to never cut off a real held command.
+        self.declare_parameter('steer_deadband', 0.12)      # rad — below this, steer relay stays centered (was an implicit 0.05, too tight for per-frame vision noise)
+        self.declare_parameter('steer_min_interval', 0.25)  # sec — minimum time between relay direction changes, so the mechanical steering has time to actually move before the next command arrives
 
         modbus_port    = self.get_parameter('modbus_port').value
         modbus_baud    = self.get_parameter('modbus_baud').value
@@ -104,6 +106,8 @@ class RS485Bridge(Node):
         self._max_power    = self.get_parameter('bldc_max_power').value
         self._power_step   = self.get_parameter('bldc_ramp_rate').value / rate
         self._vel_timeout  = self.get_parameter('vel_timeout').value
+        self._steer_deadband     = self.get_parameter('steer_deadband').value
+        self._steer_min_interval = self.get_parameter('steer_min_interval').value
 
         # last commanded values — stop is normally explicit (vel == 0.0);
         # _vel_last_rx below is only a safety net for a lost stop signal, not
@@ -114,6 +118,7 @@ class RS485Bridge(Node):
         self._steer       = 0.0    # rad — last received angle
         self._steer_dirty = False  # True when a new angle arrived but not yet written
         self._steer_sent_val = None  # last val (0/1/2) actually written to Modbus
+        self._steer_last_change_t = 0.0  # monotonic time of last relay direction write
         self._vs_active   = False  # mirrors /mission/vs_active
 
         # per-wheel BLDC lifecycle: Enable is sent once at startup (same as
@@ -521,9 +526,9 @@ class RS485Bridge(Node):
         self._steer_dirty = False
 
         steer = self._steer
-        if steer > 0.05:
+        if steer > self._steer_deadband:
             val = 1
-        elif steer < -0.05:
+        elif steer < -self._steer_deadband:
             val = 2
         else:
             val = 0
@@ -531,8 +536,17 @@ class RS485Bridge(Node):
         if val == self._steer_sent_val:
             return
 
+        # debounce: don't flip the relay again until the mechanism has had
+        # time to actually move — per-frame vision noise otherwise chatters
+        # the relay left/right/center many times a second and the robot
+        # barely makes forward progress
+        now = time.monotonic()
+        if now - self._steer_last_change_t < self._steer_min_interval:
+            return
+
         self._write_register(_RELAY_STEER, 0, val)
         self._steer_sent_val = val
+        self._steer_last_change_t = now
 
     def _send_actuators(self):
         """Write relay actuator boards (FC06 ch0/ch1) and separator BLDC
