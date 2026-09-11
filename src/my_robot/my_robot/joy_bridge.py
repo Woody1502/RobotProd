@@ -109,8 +109,10 @@ class JoyBridge(Node):
         self._dpad_y    = 0
         self._sep_state = 0   # 0=stopped, 1=forward, 2=reverse
         self._enabled   = True  # web UI can disable gamepad without disconnecting
+        self._autopilot_on = False  # row_driver/vs_navigator own drive+steer while true
 
         self.create_subscription(Bool, '/joy_bridge/enabled', self._on_enabled, _latched)
+        self.create_subscription(Bool, '/autopilot/enable', self._on_autopilot, 10)
         self.create_timer(1.0 / rate, self._publish)
         threading.Thread(target=self._js_reader, daemon=True).start()
 
@@ -124,19 +126,33 @@ class JoyBridge(Node):
             with self._lock:
                 self._speed = 0.0
                 self._steer = 0.0
-            stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
-            self._vel_pub.publish(stop)
-            self._steer_pub.publish(Float64MultiArray(data=[0.0]))
+            if not self._autopilot_on:
+                stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
+                self._vel_pub.publish(stop)
+                self._steer_pub.publish(Float64MultiArray(data=[0.0]))
             self._stop_all_attachments()
             self.get_logger().info('Gamepad disabled by web UI')
         elif not was_enabled and msg.data:
             self.get_logger().info('Gamepad enabled by web UI')
 
+    def _on_autopilot(self, msg: Bool):
+        was_on = self._autopilot_on
+        self._autopilot_on = msg.data
+        if not was_on and msg.data:
+            self.get_logger().info(
+                'Autopilot engaged — gamepad drive/steer suppressed (attachments still active)')
+        elif was_on and not msg.data:
+            self.get_logger().info('Autopilot disengaged — gamepad drive/steer resumed')
+
     # ── periodic drive publisher ─────────────────────────────────────────────
 
     def _publish(self):
         with self._lock:
-            if not self._connected or not self._enabled:
+            if not self._connected or not self._enabled or self._autopilot_on:
+                # autopilot owns /velocity_controller/commands and
+                # /position_controller/commands while engaged — publishing
+                # our idle (0.0) values here would race row_driver/vs_navigator
+                # on the same topics and starve the BLDC ramp
                 return
             speed = self._speed
             steer = self._steer
@@ -256,10 +272,11 @@ class JoyBridge(Node):
                     self._dpad_y    = 0
                     self._connected = False
                 self._sep_state = 0
-                stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
-                self._vel_pub.publish(stop)
-                steer_z = Float64MultiArray(); steer_z.data = [0.0]
-                self._steer_pub.publish(steer_z)
+                if not self._autopilot_on:
+                    stop = Float64MultiArray(); stop.data = [0.0, 0.0, 0.0, 0.0]
+                    self._vel_pub.publish(stop)
+                    steer_z = Float64MultiArray(); steer_z.data = [0.0]
+                    self._steer_pub.publish(steer_z)
                 self._stop_all_attachments()
                 self.get_logger().warn('Gamepad disconnected, retry in 3s...')
             time.sleep(3.0)
